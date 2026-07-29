@@ -37,6 +37,12 @@ pub fn process_char(ch: char) -> Vec<EditAction> {
     with(|s| s.engine.process(Keystroke::char(ch))).unwrap_or_default()
 }
 
+/// Feed a Backspace/Delete keystroke to the engine. Empty means "not
+/// currently composing — pass the native Backspace through untouched".
+pub fn backspace() -> Vec<EditAction> {
+    with(|s| s.engine.backspace()).unwrap_or_default()
+}
+
 /// Reset the composition buffer (mouse click / focus change).
 // Only wired up on macOS today; the Windows scaffold will call it once it grows
 // a mouse hook.

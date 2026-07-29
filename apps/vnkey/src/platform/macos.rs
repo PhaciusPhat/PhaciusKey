@@ -194,10 +194,36 @@ unsafe extern "C" fn tap_callback(
         return event;
     }
 
+    // The Delete/Backspace key needs its own path: it must pop the last raw
+    // keystroke from the composition buffer (which can represent more than
+    // one on-screen character, e.g. telex "as" → "á") and redraw, rather than
+    // being read as a character and fed into the buffer like ordinary input.
+    let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+    if keycode == VK_DELETE {
+        let actions = state::backspace();
+        if actions.is_empty() {
+            return event; // not composing — let the native Backspace run
+        }
+        inject(&actions);
+        return ptr::null_mut(); // we already redrew; swallow the original
+    }
+
     let ch = match read_char(event) {
         Some(c) => c,
         None => return event,
     };
+
+    // Arrow keys, Home/End/Page Up/Down, and function keys report through
+    // `CGEventKeyboardGetUnicodeString` as control characters or codepoints in
+    // the Unicode private-use area (NSHomeFunctionKey, NSF1FunctionKey, …).
+    // On full-size keyboards these arrive *without* the Fn modifier flag (only
+    // laptop Fn-combos set it), so the shortcut-flag check above misses them.
+    // None of these are Vietnamese input — treat them as a composition
+    // boundary and pass through untouched instead of corrupting the buffer.
+    if ch.is_control() || ('\u{F700}'..='\u{F8FF}').contains(&ch) {
+        state::reset();
+        return event;
+    }
 
     let actions = state::process_char(ch);
     if actions.is_empty() {

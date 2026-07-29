@@ -42,6 +42,26 @@ impl Engine {
         self.recompute()
     }
 
+    /// Handle a Backspace/Delete keystroke.
+    ///
+    /// Vietnamese diacritics can fold several raw keystrokes into one displayed
+    /// character (e.g. telex "as" → "á"), so a single Backspace must undo the
+    /// last *raw* keystroke and recompute the word, not just drop one on-screen
+    /// character. Returns actions to reconcile the display; an empty vec means
+    /// "we're not composing — let the native Backspace pass through untouched."
+    pub fn backspace(&mut self) -> Vec<EditAction> {
+        if !self.config.enabled || self.buffer.raw.is_empty() {
+            return vec![];
+        }
+
+        self.buffer.pop();
+        if self.buffer.raw.is_empty() {
+            // Nothing left to compose; clear the (now stale) displayed word.
+            return self.buffer.clear_actions();
+        }
+        self.recompute()
+    }
+
     /// Recompute the target Vietnamese word from the current raw buffer,
     /// and return the diff actions needed to update the on-screen text.
     fn recompute(&mut self) -> Vec<EditAction> {
@@ -221,5 +241,47 @@ mod tests {
         let mut e = Engine::new(Config { enabled: false, ..Default::default() });
         let actions = e.process(Keystroke::char('a'));
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn backspace_undoes_last_raw_keystroke_not_last_char() {
+        // Telex "as" folds 2 raw keystrokes into 1 displayed char: "á".
+        let mut e = engine();
+        type_str(&mut e, "as");
+        assert_eq!(e.buffer.displayed, "á");
+
+        // Backspace must undo the "s" (raw), leaving "a" composing — not just
+        // blindly delete the on-screen character and stop.
+        let actions = e.backspace();
+        assert_eq!(e.buffer.raw, "a");
+        assert_eq!(e.buffer.displayed, "a");
+        assert_eq!(actions, vec![EditAction::Backspace(1), EditAction::Insert("a".into())]);
+    }
+
+    #[test]
+    fn backspace_to_empty_clears_buffer() {
+        let mut e = engine();
+        type_str(&mut e, "a");
+        let actions = e.backspace();
+        assert_eq!(actions, vec![EditAction::Backspace(1)]);
+        assert!(e.buffer.raw.is_empty());
+        assert!(e.buffer.displayed.is_empty());
+    }
+
+    #[test]
+    fn backspace_when_not_composing_passes_through() {
+        let mut e = engine();
+        assert!(e.backspace().is_empty());
+    }
+
+    #[test]
+    fn backspace_then_retype_reproduces_tone() {
+        // Regression: after backspacing off a tone key, re-typing it should
+        // reconstruct the same word rather than leaving stale state behind.
+        let mut e = engine();
+        type_str(&mut e, "as");
+        e.backspace();
+        type_str(&mut e, "s");
+        assert_eq!(e.buffer.displayed, "á");
     }
 }

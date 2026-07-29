@@ -19,6 +19,12 @@ impl CompositionBuffer {
         self.raw.push(ch);
     }
 
+    /// Remove the last raw keystroke (Backspace support). Returns `false` if
+    /// the buffer was already empty.
+    pub fn pop(&mut self) -> bool {
+        self.raw.pop().is_some()
+    }
+
     pub fn reset(&mut self) {
         self.raw.clear();
         self.displayed.clear();
