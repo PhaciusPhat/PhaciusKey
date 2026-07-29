@@ -71,6 +71,10 @@ impl Engine {
 
         // Apply tone placement to form the target word.
         let target = apply_tone(bare, tone, self.config.placement);
+        // The methods lowercase everything for processing; restore the case the
+        // user actually typed (Shift). Handles the common patterns: a leading
+        // capital ("Xin" → "Xin") and all-caps ("VIET" → "VIẾT").
+        let target = apply_case(&target, &raw);
 
         self.buffer.diff_to(&target)
     }
@@ -103,6 +107,32 @@ impl Engine {
     pub fn current_displayed(&self) -> String {
         self.buffer.displayed.clone()
     }
+}
+
+/// Re-apply the case the user typed to a converted (lowercase) syllable.
+///
+/// - All typed letters uppercase → uppercase the whole result (`VIET` → `VIẾT`).
+/// - Otherwise, if the first typed letter was uppercase → capitalize the first
+///   letter of the result (`Xin` → `Xin`, `Has` → `Há`).
+/// - Otherwise leave it lowercase.
+fn apply_case(target: &str, raw: &str) -> String {
+    let letters: Vec<char> = raw.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.is_empty() {
+        return target.to_string();
+    }
+
+    if letters.len() > 1 && letters.iter().all(|c| c.is_uppercase()) {
+        return target.to_uppercase();
+    }
+
+    if letters[0].is_uppercase() {
+        let mut chars = target.chars();
+        if let Some(first) = chars.next() {
+            return first.to_uppercase().collect::<String>() + chars.as_str();
+        }
+    }
+
+    target.to_string()
 }
 
 fn is_word_boundary(ch: char) -> bool {
@@ -154,6 +184,27 @@ mod tests {
         let mut e = engine();
         type_str(&mut e, "has");
         assert_eq!(e.buffer.displayed, "há");
+    }
+
+    #[test]
+    fn preserves_leading_capital() {
+        let mut e = engine();
+        type_str(&mut e, "Has");
+        assert_eq!(e.buffer.displayed, "Há");
+    }
+
+    #[test]
+    fn preserves_all_caps() {
+        let mut e = engine();
+        type_str(&mut e, "VIEETS"); // VIET with ê + sắc, all caps
+        assert_eq!(e.buffer.displayed, "VIẾT");
+    }
+
+    #[test]
+    fn lowercase_stays_lowercase() {
+        let mut e = engine();
+        type_str(&mut e, "vieets");
+        assert_eq!(e.buffer.displayed, "viết");
     }
 
     #[test]

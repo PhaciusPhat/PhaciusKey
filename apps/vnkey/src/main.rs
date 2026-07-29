@@ -21,6 +21,7 @@
 
 mod config;
 mod platform;
+mod png_write;
 mod state;
 mod tray;
 mod update;
@@ -42,6 +43,16 @@ enum UserEvent {
 }
 
 fn main() {
+    // Hidden packaging-only path: `vnkey --export-iconset <dir>` dumps the app
+    // icon's PNGs for `scripts/package-app.sh` to hand to `iconutil`. Never hit
+    // during normal use.
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("--export-iconset") {
+        let dir = args.next().expect("usage: vnkey --export-iconset <dir>");
+        tray::export_iconset(std::path::Path::new(&dir)).expect("failed to export iconset");
+        return;
+    }
+
     // Load persisted settings and initialize the shared engine state.
     let settings = Settings::load();
     state::init(settings);

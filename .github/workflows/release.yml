@@ -50,7 +50,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            "dist/phacius_vnkey-${{ steps.version.outputs.version }}.dmg" \
-            --title "phacius_vnkey ${{ steps.version.outputs.version }}" \
+            "dist/PhaciusKey-${{ steps.version.outputs.version }}.dmg" \
+            --title "PhaciusKey ${{ steps.version.outputs.version }}" \
             --generate-notes \
             --prerelease

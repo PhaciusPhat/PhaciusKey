@@ -13,7 +13,7 @@ engine driving thin per-OS keyboard hooks.
 
 ### ⬇️ [Download the latest release](https://github.com/PhaciusPhat/phacius_vnkey/releases/latest)
 
-Grab `phacius_vnkey-<version>.dmg`, drag it to Applications, done. No Rust, no toolchain.
+Grab `PhaciusKey-<version>.dmg`, drag it to Applications, done. No Rust, no toolchain.
 
 **Requires:** macOS 13 Ventura or later · Apple Silicon (M-series) Mac.
 
@@ -21,17 +21,17 @@ Grab `phacius_vnkey-<version>.dmg`, drag it to Applications, done. No Rust, no t
 
 ## Install (macOS users)
 
-1. Open the [**latest release**](https://github.com/PhaciusPhat/phacius_vnkey/releases/latest) and download **`phacius_vnkey-<version>.dmg`** under **Assets**.
-2. Double-click the downloaded `.dmg`, then drag **phacius_vnkey** onto the **Applications** shortcut.
-3. Open **phacius_vnkey** from Applications. The **VN** icon appears in your menu bar.
+1. Open the [**latest release**](https://github.com/PhaciusPhat/phacius_vnkey/releases/latest) and download **`PhaciusKey-<version>.dmg`** under **Assets**.
+2. Double-click the downloaded `.dmg`, then drag **PhaciusKey** onto the **Applications** shortcut.
+3. Open **PhaciusKey** from Applications. The **VN** icon appears in your menu bar.
 4. On first launch macOS asks for **Accessibility** permission — grant it in
    System Settings → Privacy & Security → Accessibility, then **relaunch the app**
    (the keyboard hook is installed once at startup).
 
 > **First launch blocked?** The app is ad-hoc signed, not notarized, so macOS
 > may say it's from an "unidentified developer." Right-click (or Control-click)
-> **phacius_vnkey** in Applications → **Open** → **Open** again to allow it.
-> Alternatively: `xattr -dr com.apple.quarantine /Applications/phacius_vnkey.app`
+> **PhaciusKey** in Applications → **Open** → **Open** again to allow it.
+> Alternatively: `xattr -dr com.apple.quarantine /Applications/PhaciusKey.app`
 
 ---
 
@@ -95,8 +95,8 @@ prompted (System Settings → Privacy & Security → Accessibility), then relaun
 bash scripts/package-app.sh
 ```
 
-Builds the release binary, assembles `phacius_vnkey.app`, ad-hoc signs it, and
-writes `dist/phacius_vnkey-<version>.dmg`. To ship notarized, replace the
+Builds the release binary, assembles `PhaciusKey.app`, ad-hoc signs it, and
+writes `dist/PhaciusKey-<version>.dmg`. To ship notarized, replace the
 `codesign --sign -` line with your Developer ID and run `xcrun notarytool`.
 
 ---
@@ -109,7 +109,7 @@ writes `dist/phacius_vnkey-<version>.dmg`. To ship notarized, replace the
 | Switch input method | Click the VN icon → **Telex** / **VNI** |
 | Tone placement | Click the VN icon → **Modern** / **Classic** |
 | Auto-restore English | Click the VN icon → **Auto-restore English** |
-| Quit | Click the VN icon → **Quit vnkey** |
+| Quit | Click the VN icon → **Quit PhaciusKey** |
 
 Settings persist to `~/Library/Application Support/vnkey/config.toml` on macOS
 (the OS config dir elsewhere).

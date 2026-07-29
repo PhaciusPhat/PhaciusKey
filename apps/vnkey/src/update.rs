@@ -20,7 +20,7 @@ pub fn new_issue_url() -> String {
     format!(
         "https://github.com/{REPO}/issues/new?title=%5Bbug%5D%20&body={}",
         urlencode(&format!(
-            "\n\n---\nphacius_vnkey {CURRENT} · macOS\n(describe the problem, and what you typed)"
+            "\n\n---\nPhaciusKey {CURRENT} · macOS\n(describe the problem, and what you typed)"
         ))
     )
 }
@@ -38,7 +38,7 @@ pub fn check_for_newer() -> Option<String> {
             "--max-time",
             "8",
             "-H",
-            "User-Agent: phacius_vnkey",
+            "User-Agent: PhaciusKey",
             "-H",
             "Accept: application/vnd.github+json",
             &format!("https://api.github.com/repos/{REPO}/releases?per_page=10"),

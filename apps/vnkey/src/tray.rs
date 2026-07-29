@@ -4,10 +4,14 @@
 //! `muda` crates, which render a native `NSStatusItem` on macOS and a
 //! `Shell_NotifyIcon` tray on Windows from the same code.
 
+use std::io;
+use std::path::Path;
+
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::config::{Method, Placement, Settings};
+use crate::png_write;
 use crate::update;
 
 /// The tray icon plus the menu items whose state we update after each change.
@@ -28,7 +32,7 @@ impl Tray {
     /// Build the tray icon and menu, reflecting the current settings.
     pub fn new(settings: &Settings) -> Result<Self, String> {
         let header = MenuItem::new(
-            format!("phacius_vnkey  v{}", update::CURRENT),
+            format!("PhaciusKey  v{}", update::CURRENT),
             false,
             None,
         );
@@ -60,7 +64,7 @@ impl Tray {
             CheckMenuItem::new("Auto-restore English", true, settings.auto_restore, None);
         let update = MenuItem::new("Check for updates…", true, None);
         let report = MenuItem::new("Report an issue…", true, None);
-        let quit = MenuItem::new("Quit phacius_vnkey", true, None);
+        let quit = MenuItem::new("Quit PhaciusKey", true, None);
 
         let menu = Menu::new();
         let sep = || PredefinedMenuItem::separator();
@@ -83,7 +87,7 @@ impl Tray {
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_icon(status_icon(settings.enabled))
-            .with_tooltip("phacius_vnkey — Vietnamese input")
+            .with_tooltip("PhaciusKey — Vietnamese input")
             .build()
             .map_err(|e| e.to_string())?;
 
@@ -125,18 +129,18 @@ impl Tray {
 /// Each letter glows. Drawn at 4× and box-downsampled for crisp, anti-aliased
 /// edges.
 fn status_icon(enabled: bool) -> Icon {
-    let (rgba, size) = render_rgba(enabled);
-    Icon::from_rgba(rgba, size, size).expect("valid rgba icon")
+    let rgba = render_rgba(36, enabled);
+    Icon::from_rgba(rgba, 36, 36).expect("valid rgba icon")
 }
 
 type Rgb = (f32, f32, f32);
 
-/// Draw the badge to a straight-alpha RGBA buffer. Returns `(pixels, size)`.
-fn render_rgba(enabled: bool) -> (Vec<u8>, u32) {
-    const SIZE: usize = 36;
+/// Draw the neon badge to a straight-alpha RGBA buffer of `size`×`size` pixels.
+/// Shared by the small tray glyph and the large app icon.
+pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
     const SS: usize = 4; // supersample factor
-    const HI: usize = SIZE * SS;
-    const N: usize = HI * HI;
+    let big = size * SS;
+    let n = big * big;
 
     // Neon palette: bright tube color + a hot near-white core.
     let (neon, core): (Rgb, Rgb) = if enabled {
@@ -146,46 +150,46 @@ fn render_rgba(enabled: bool) -> (Vec<u8>, u32) {
     };
     let badge: Rgb = (12.0, 12.0, 20.0); // near-black, so neon reads as neon
 
-    let hi_f = HI as f32;
-    let inset = hi_f * 0.055;
-    let radius = hi_f * 0.26;
-    let (x0, y0, x1, y1) = (inset, inset, hi_f - inset, hi_f - inset);
+    let big_f = big as f32;
+    let inset = big_f * 0.055;
+    let radius = big_f * 0.26;
+    let (x0, y0, x1, y1) = (inset, inset, big_f - inset, big_f - inset);
 
     // Badge mask (1 inside the rounded rect).
-    let mut mask = vec![0f32; N];
-    for y in 0..HI {
-        for x in 0..HI {
+    let mut mask = vec![0f32; n];
+    for y in 0..big {
+        for x in 0..big {
             if inside_rounded(x as f32 + 0.5, y as f32 + 0.5, x0, y0, x1, y1, radius) {
-                mask[y * HI + x] = 1.0;
+                mask[y * big + x] = 1.0;
             }
         }
     }
 
     // Letter coverage (1 on the strokes).
-    let mut cov = vec![0f32; N];
-    let hw = hi_f * 0.058; // stroke half-width — chunky tube
-    let (ty0, ty1) = (hi_f * 0.31, hi_f * 0.69);
-    let lw = hi_f * 0.34;
-    let cx = hi_f * 0.5;
+    let mut cov = vec![0f32; n];
+    let hw = big_f * 0.058; // stroke half-width — chunky tube
+    let (ty0, ty1) = (big_f * 0.31, big_f * 0.69);
+    let lw = big_f * 0.34;
+    let cx = big_f * 0.5;
     let lx = cx - lw * 0.5;
     if enabled {
         // V: two diagonals meeting at the bottom center.
-        stroke(&mut cov, HI, lx, ty0, cx, ty1, hw);
-        stroke(&mut cov, HI, cx, ty1, lx + lw, ty0, hw);
+        stroke(&mut cov, big, lx, ty0, cx, ty1, hw);
+        stroke(&mut cov, big, cx, ty1, lx + lw, ty0, hw);
     } else {
         // E: left post + top, middle, bottom bars.
-        stroke(&mut cov, HI, lx, ty0, lx, ty1, hw);
-        stroke(&mut cov, HI, lx, ty0, lx + lw, ty0, hw);
-        stroke(&mut cov, HI, lx, (ty0 + ty1) * 0.5, lx + lw * 0.86, (ty0 + ty1) * 0.5, hw);
-        stroke(&mut cov, HI, lx, ty1, lx + lw, ty1, hw);
+        stroke(&mut cov, big, lx, ty0, lx, ty1, hw);
+        stroke(&mut cov, big, lx, ty0, lx + lw, ty0, hw);
+        stroke(&mut cov, big, lx, (ty0 + ty1) * 0.5, lx + lw * 0.86, (ty0 + ty1) * 0.5, hw);
+        stroke(&mut cov, big, lx, ty1, lx + lw, ty1, hw);
     }
 
     // Glow = blurred letter coverage.
-    let glow = box_blur(&cov, HI, (hi_f * 0.05) as usize, 3);
+    let glow = box_blur(&cov, big, (big_f * 0.05) as usize, 3);
 
     // Compose: badge, then additive neon glow, then the bright letter core.
-    let mut hi = vec![0u8; N * 4];
-    for i in 0..N {
+    let mut hi = vec![0u8; n * 4];
+    for i in 0..n {
         if mask[i] <= 0.0 {
             continue; // transparent outside the badge
         }
@@ -206,14 +210,14 @@ fn render_rgba(enabled: bool) -> (Vec<u8>, u32) {
     }
 
     // Box-downsample with premultiplied alpha (avoids dark edge fringing).
-    let mut out = vec![0u8; SIZE * SIZE * 4];
+    let mut out = vec![0u8; size * size * 4];
     let samples = (SS * SS) as u32;
-    for y in 0..SIZE {
-        for x in 0..SIZE {
+    for y in 0..size {
+        for x in 0..size {
             let (mut sr, mut sg, mut sb, mut sa) = (0u32, 0u32, 0u32, 0u32);
             for sy in 0..SS {
                 for sx in 0..SS {
-                    let i = (((y * SS + sy) * HI) + (x * SS + sx)) * 4;
+                    let i = (((y * SS + sy) * big) + (x * SS + sx)) * 4;
                     let a = hi[i + 3] as u32;
                     sr += hi[i] as u32 * a;
                     sg += hi[i + 1] as u32 * a;
@@ -221,7 +225,7 @@ fn render_rgba(enabled: bool) -> (Vec<u8>, u32) {
                     sa += a;
                 }
             }
-            let o = (y * SIZE + x) * 4;
+            let o = (y * size + x) * 4;
             out[o + 3] = (sa / samples) as u8;
             // Un-premultiply. `checked_div` guards the fully-transparent block.
             if let Some(r) = sr.checked_div(sa) {
@@ -232,7 +236,35 @@ fn render_rgba(enabled: bool) -> (Vec<u8>, u32) {
         }
     }
 
-    (out, SIZE as u32)
+    out
+}
+
+/// Standard macOS iconset filenames and the pixel size each must be rendered
+/// at (the `@2x` entries are the same logical size at double resolution).
+const ICONSET_SIZES: &[(&str, u32)] = &[
+    ("icon_16x16.png", 16),
+    ("icon_16x16@2x.png", 32),
+    ("icon_32x32.png", 32),
+    ("icon_32x32@2x.png", 64),
+    ("icon_128x128.png", 128),
+    ("icon_128x128@2x.png", 256),
+    ("icon_256x256.png", 256),
+    ("icon_256x256@2x.png", 512),
+    ("icon_512x512.png", 512),
+    ("icon_512x512@2x.png", 1024),
+];
+
+/// Render the app icon (the "enabled" neon-green glyph, since the Finder/Dock
+/// icon has no on/off state) at every size macOS's `.iconset` format expects,
+/// writing PNGs into `dir`. Only used by `scripts/package-app.sh` via the
+/// hidden `--export-iconset` flag — never invoked during normal app use.
+pub(crate) fn export_iconset(dir: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    for (name, size) in ICONSET_SIZES {
+        let rgba = render_rgba(*size as usize, true);
+        png_write::write_png(&dir.join(name), *size, &rgba)?;
+    }
+    Ok(())
 }
 
 /// Whether a point lies inside a rounded rectangle.
@@ -282,29 +314,31 @@ fn box_blur(src: &[f32], stride: usize, radius: usize, passes: usize) -> Vec<f32
     let mut tmp = vec![0f32; src.len()];
     let window = (radius * 2 + 1) as f32;
     for _ in 0..passes {
-        // Horizontal.
+        // Horizontal — sliding window sum (O(width) per row, radius-independent).
         for y in 0..rows {
             let base = y * stride;
+            let mut sum: f32 = (0..=radius.min(stride - 1)).map(|k| buf[base + k]).sum();
             for x in 0..stride {
-                let lo = x.saturating_sub(radius);
-                let hi = (x + radius).min(stride - 1);
-                let mut sum = 0.0;
-                for k in lo..=hi {
-                    sum += buf[base + k];
-                }
                 tmp[base + x] = sum / window;
+                if let Some(add) = (x + radius + 1 < stride).then_some(x + radius + 1) {
+                    sum += buf[base + add];
+                }
+                if x >= radius {
+                    sum -= buf[base + x - radius];
+                }
             }
         }
         // Vertical.
         for x in 0..stride {
+            let mut sum: f32 = (0..=radius.min(rows - 1)).map(|k| tmp[k * stride + x]).sum();
             for y in 0..rows {
-                let lo = y.saturating_sub(radius);
-                let hi = (y + radius).min(rows - 1);
-                let mut sum = 0.0;
-                for k in lo..=hi {
-                    sum += tmp[k * stride + x];
-                }
                 buf[y * stride + x] = sum / window;
+                if y + radius + 1 < rows {
+                    sum += tmp[(y + radius + 1) * stride + x];
+                }
+                if y >= radius {
+                    sum -= tmp[(y - radius) * stride + x];
+                }
             }
         }
     }

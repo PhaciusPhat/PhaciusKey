@@ -3,13 +3,15 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>phacius_vnkey</string>
+    <string>PhaciusKey</string>
     <key>CFBundleDisplayName</key>
-    <string>phacius_vnkey</string>
+    <string>PhaciusKey</string>
     <key>CFBundleIdentifier</key>
     <string>com.phacius.vnkey</string>
     <key>CFBundleExecutable</key>
     <string>vnkey</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

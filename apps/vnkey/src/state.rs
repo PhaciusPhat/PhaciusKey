@@ -1,9 +1,10 @@
 //! Process-wide shell state: the engine plus the live settings.
 //!
 //! The engine is thread-unsafe by design (single composition buffer), so it
-//! lives behind a `Mutex`. On macOS the keyboard-tap callback and the tray menu
-//! both run on the main thread, so the lock is effectively uncontended; the
-//! `Mutex` exists only to satisfy the `Send` bound shared state requires.
+//! lives behind a `Mutex`. On macOS the keyboard-tap callback runs on its own
+//! dedicated thread (see `platform::macos::Hook`) while the tray menu runs on
+//! the main thread, so this lock mediates genuine cross-thread access — not
+//! just a `Send`-bound formality.
 
 use std::sync::{Mutex, OnceLock};
 

@@ -80,40 +80,66 @@ thread_local! {
     static TAP_PORT: Cell<CFMachPortRef> = const { Cell::new(ptr::null_mut()) };
 }
 
-/// Owns the event tap resources. Dropping it tears the hook down.
+/// Owns the event-tap thread. The tap runs on its **own thread with its own
+/// `CFRunLoop`**: tao's main run loop does not service arbitrary
+/// `CFRunLoopSource`s, so a tap added there never fires. A dedicated run loop is
+/// the reliable pattern.
 pub struct Hook {
-    _port: CFMachPort,
-    _source: CFRunLoopSource,
+    _thread: std::thread::JoinHandle<()>,
 }
 
 impl KeyboardHook for Hook {
     fn install() -> Result<Self, String> {
-        let mask: u64 = (1 << ET_KEY_DOWN) | (1 << ET_LEFT_MOUSE_DOWN) | (1 << ET_RIGHT_MOUSE_DOWN);
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
+        let thread = std::thread::Builder::new()
+            .name("vnkey-eventtap".into())
+            .spawn(move || match create_tap() {
+                Ok(keepalive) => {
+                    let _ = tx.send(Ok(()));
+                    // Block forever, servicing the tap on this thread's run loop.
+                    CFRunLoop::run_current();
+                    drop(keepalive);
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                }
+            })
+            .map_err(|e| format!("failed to spawn event-tap thread: {e}"))?;
 
-        // tap=HID(0), place=HeadInsert(0), options=Default(0).
-        let port_ref = unsafe {
-            CGEventTapCreate(0, 0, 0, mask, tap_callback, ptr::null_mut())
-        };
-        if port_ref.is_null() {
-            return Err("Failed to create event tap. Grant Accessibility permission in \
-                        System Settings → Privacy & Security → Accessibility, then relaunch."
-                .to_string());
+        match rx.recv() {
+            Ok(Ok(())) => Ok(Hook { _thread: thread }),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Err("event-tap thread exited before signalling".to_string()),
         }
-
-        let port = unsafe { CFMachPort::wrap_under_create_rule(port_ref) };
-        let source = port
-            .create_runloop_source(0)
-            .map_err(|_| "Failed to create run loop source for event tap.".to_string())?;
-
-        let run_loop = CFRunLoop::get_current();
-        unsafe {
-            run_loop.add_source(&source, kCFRunLoopCommonModes);
-            CGEventTapEnable(port.as_concrete_TypeRef(), true);
-        }
-        TAP_PORT.with(|p| p.set(port.as_concrete_TypeRef()));
-
-        Ok(Hook { _port: port, _source: source })
     }
+}
+
+/// Create + enable the tap on the current thread, returning the resources that
+/// must stay alive for the tap to keep working.
+fn create_tap() -> Result<(CFMachPort, CFRunLoopSource), String> {
+    let mask: u64 = (1 << ET_KEY_DOWN) | (1 << ET_LEFT_MOUSE_DOWN) | (1 << ET_RIGHT_MOUSE_DOWN);
+
+    // tap=HID(0), place=HeadInsert(0), options=Default(0).
+    let port_ref = unsafe { CGEventTapCreate(0, 0, 0, mask, tap_callback, ptr::null_mut()) };
+    if port_ref.is_null() {
+        return Err("Failed to create event tap. Grant Accessibility permission in \
+                    System Settings → Privacy & Security → Accessibility."
+            .to_string());
+    }
+
+    let port = unsafe { CFMachPort::wrap_under_create_rule(port_ref) };
+    let source = port
+        .create_runloop_source(0)
+        .map_err(|_| "Failed to create run loop source for event tap.".to_string())?;
+
+    let run_loop = CFRunLoop::get_current();
+    unsafe {
+        run_loop.add_source(&source, kCFRunLoopCommonModes);
+        CGEventTapEnable(port.as_concrete_TypeRef(), true);
+    }
+    TAP_PORT.with(|p| p.set(port.as_concrete_TypeRef()));
+
+    Ok((port, source))
 }
 
 /// The C-ABI tap callback. Returns the original event pointer to pass a key
