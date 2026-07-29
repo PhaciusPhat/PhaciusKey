@@ -26,7 +26,29 @@ pub use windows::Hook;
 /// `install` must be called on the main thread; the implementation registers
 /// itself with the current run loop / message loop, which the caller then runs.
 /// The returned value owns the OS resources and must be kept alive for the hook
-/// to stay active.
+/// to stay active. `install` does not prompt for permission — call
+/// [`request_permission`] once first, then retry `install` once
+/// [`permission_granted`] returns true.
 pub trait KeyboardHook: Sized {
     fn install() -> Result<Self, String>;
+}
+
+/// Show the OS permission prompt required to intercept keystrokes (macOS
+/// Accessibility). No-op where no permission is needed. Call once at startup.
+pub fn request_permission() {
+    #[cfg(target_os = "macos")]
+    macos::request_accessibility_permission(true);
+}
+
+/// Whether the process currently holds the permission needed to intercept
+/// keystrokes. Never prompts — safe to poll. Always true where none is needed.
+pub fn permission_granted() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::request_accessibility_permission(false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
 }

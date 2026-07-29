@@ -1,6 +1,6 @@
 [package]
 name = "vnkey"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "Cross-platform Vietnamese input method (Telex/VNI) — Rust shell over vnkey-core"
 license = "MIT"
@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 vnkey-core = { path = "../../crates/vnkey-core" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 dirs = "5"
 tray-icon = "0.19"

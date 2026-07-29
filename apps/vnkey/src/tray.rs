@@ -8,6 +8,7 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::config::{Method, Placement, Settings};
+use crate::update;
 
 /// The tray icon plus the menu items whose state we update after each change.
 pub struct Tray {
@@ -18,13 +19,19 @@ pub struct Tray {
     pub modern: CheckMenuItem,
     pub classic: CheckMenuItem,
     pub auto_restore: CheckMenuItem,
+    pub update: MenuItem,
+    pub report: MenuItem,
     pub quit: MenuItem,
 }
 
 impl Tray {
     /// Build the tray icon and menu, reflecting the current settings.
     pub fn new(settings: &Settings) -> Result<Self, String> {
-        let header = MenuItem::new("phacius_vnkey — Vietnamese", false, None);
+        let header = MenuItem::new(
+            format!("phacius_vnkey  v{}", update::CURRENT),
+            false,
+            None,
+        );
         let toggle = CheckMenuItem::new("Vietnamese typing", true, settings.enabled, None);
 
         let telex = CheckMenuItem::new("Telex", true, settings.method == Method::Telex, None);
@@ -51,6 +58,8 @@ impl Tray {
 
         let auto_restore =
             CheckMenuItem::new("Auto-restore English", true, settings.auto_restore, None);
+        let update = MenuItem::new("Check for updates…", true, None);
+        let report = MenuItem::new("Report an issue…", true, None);
         let quit = MenuItem::new("Quit phacius_vnkey", true, None);
 
         let menu = Menu::new();
@@ -63,6 +72,9 @@ impl Tray {
             &method_menu,
             &tone_menu,
             &auto_restore,
+            &sep(),
+            &update,
+            &report,
             &sep(),
             &quit,
         ])
@@ -83,8 +95,15 @@ impl Tray {
             modern,
             classic,
             auto_restore,
+            update,
+            report,
             quit,
         })
+    }
+
+    /// Highlight the "Check for updates" item when a newer version is available.
+    pub fn set_update_available(&self, version: &str) {
+        self.update.set_text(format!("⬇ Update to v{version}…"));
     }
 
     /// Push the current settings into the menu's checkmarks and the tray glyph.

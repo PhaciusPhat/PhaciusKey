@@ -88,9 +88,6 @@ pub struct Hook {
 
 impl KeyboardHook for Hook {
     fn install() -> Result<Self, String> {
-        // Prompt for Accessibility permission (required for event taps).
-        request_accessibility_permission();
-
         let mask: u64 = (1 << ET_KEY_DOWN) | (1 << ET_LEFT_MOUSE_DOWN) | (1 << ET_RIGHT_MOUSE_DOWN);
 
         // tap=HID(0), place=HeadInsert(0), options=Default(0).
@@ -234,14 +231,18 @@ fn post_key(source: &CGEventSource, keycode: u16, down: bool) {
     }
 }
 
-/// Ask macOS for Accessibility permission, showing the system prompt if needed.
-/// Returns whether the process is currently trusted.
-fn request_accessibility_permission() -> bool {
+/// Check whether the process is trusted for Accessibility. When `prompt` is
+/// true, macOS shows the "grant permission" dialog if it isn't; when false it
+/// only reports the current state (safe to poll every second).
+pub(super) fn request_accessibility_permission(prompt: bool) -> bool {
     unsafe {
         let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
-        let value = CFBoolean::true_value();
-        let options =
-            CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
+        let value = if prompt {
+            CFBoolean::true_value()
+        } else {
+            CFBoolean::false_value()
+        };
+        let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
         AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
     }
 }
