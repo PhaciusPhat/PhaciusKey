@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds a distributable phacius_vnkey.dmg. End users just drag the .app to
-# /Applications — no Rust, no toolchain. Rust is only needed HERE (build time);
-# the engine is statically linked into the executable.
+# Builds a distributable phacius_vnkey.dmg from the Rust binary. End users just
+# drag the .app to /Applications — no Rust, no toolchain. Rust is only needed
+# HERE (build time); the whole app is a single self-contained Rust executable.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MACOS_DIR="$REPO_ROOT/apps/macos"
+APP_DIR="$REPO_ROOT/apps/vnkey"
 DIST="$REPO_ROOT/dist"
 APP="$DIST/phacius_vnkey.app"
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$MACOS_DIR/Info.plist")"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP_DIR/Info.plist")"
 
-echo "==> Building Rust engine + header..."
-bash "$REPO_ROOT/scripts/build-engine.sh"
-
-echo "==> Building Swift app (release)..."
-swift build --package-path "$MACOS_DIR" -c release
+echo "==> Building Rust app (release)..."
+cargo build --release -p vnkey
 
 echo "==> Assembling .app bundle..."
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$MACOS_DIR/.build/release/VnkeyApp" "$APP/Contents/MacOS/VnkeyApp"
-cp "$MACOS_DIR/Info.plist" "$APP/Contents/Info.plist"
+cp "$REPO_ROOT/target/release/vnkey" "$APP/Contents/MacOS/vnkey"
+cp "$APP_DIR/Info.plist" "$APP/Contents/Info.plist"
 
 # Ad-hoc sign so the bundle keeps a stable identity across launches —
 # required for Accessibility permission to persist. Replace "-" with your

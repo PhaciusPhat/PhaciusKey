@@ -19,13 +19,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install cbindgen
-        run: cargo install cbindgen
-
       - name: Read app version from Info.plist
         id: version
         run: |
-          version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' apps/macos/Info.plist)"
+          version="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' apps/vnkey/Info.plist)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "App version: $version"
 
@@ -34,6 +31,14 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           if [ "$tag" != "${{ steps.version.outputs.version }}" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match Info.plist version ${{ steps.version.outputs.version }} (expected tag v${{ steps.version.outputs.version }})"
+            exit 1
+          fi
+
+      - name: Verify Cargo.toml version matches
+        run: |
+          cargo_version="$(grep -m1 '^version' apps/vnkey/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$cargo_version" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::apps/vnkey/Cargo.toml version $cargo_version does not match Info.plist ${{ steps.version.outputs.version }}"
             exit 1
           fi
 
