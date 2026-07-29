@@ -1,13 +1,15 @@
 # phacius_vnkey
 
-Vietnamese input method (IME) for macOS. Type Vietnamese with Telex or VNI using any keyboard — no special hardware required.
+Vietnamese input method (IME). Type Vietnamese with Telex or VNI using any
+keyboard — no special hardware required. **Written entirely in Rust**, one shared
+engine driving thin per-OS keyboard hooks.
 
 - **Telex** and **VNI** input methods
 - Smart spell-check — only applies diacritics when the result is a valid Vietnamese syllable
 - Auto-restores raw keystrokes for English and other non-Vietnamese words
 - Modern and Classic tone placement (`hòa` vs `hoà`)
-- Per-app on/off and a global toggle hotkey (`⌃⌥V`)
-- Menu-bar status icon; SwiftUI preferences window
+- Menu-bar / system-tray control (toggle, method, tone placement, auto-restore)
+- Cross-platform by design: **macOS today**, **Windows** scaffold in progress
 
 ### ⬇️ [Download the latest release](https://github.com/PhaciusPhat/phacius_vnkey/releases/latest)
 
@@ -17,20 +19,47 @@ Grab `phacius_vnkey-<version>.dmg`, drag it to Applications, done. No Rust, no t
 
 ---
 
-## Install (users)
+## Install (macOS users)
 
 1. Open the [**latest release**](https://github.com/PhaciusPhat/phacius_vnkey/releases/latest) and download **`phacius_vnkey-<version>.dmg`** under **Assets**.
-2. Double-click the downloaded `.dmg`, then drag **phacius_vnkey** onto the **Applications** shortcut in the window that opens.
-3. Open **phacius_vnkey** from Applications (or Launchpad). The **VN** icon appears in your menu bar.
+2. Double-click the downloaded `.dmg`, then drag **phacius_vnkey** onto the **Applications** shortcut.
+3. Open **phacius_vnkey** from Applications. The **VN** icon appears in your menu bar.
 4. On first launch macOS asks for **Accessibility** permission — grant it in
-   System Settings → Privacy & Security → Accessibility. The keyboard hook
-   activates immediately once granted (no restart needed).
+   System Settings → Privacy & Security → Accessibility, then **relaunch the app**
+   (the keyboard hook is installed once at startup).
 
 > **First launch blocked?** The app is ad-hoc signed, not notarized, so macOS
 > may say it's from an "unidentified developer." Right-click (or Control-click)
 > **phacius_vnkey** in Applications → **Open** → **Open** again to allow it.
-> Alternatively, run once in Terminal:
-> `xattr -dr com.apple.quarantine /Applications/phacius_vnkey.app`
+> Alternatively: `xattr -dr com.apple.quarantine /Applications/phacius_vnkey.app`
+
+---
+
+## Architecture
+
+One portable brain (Rust), thin per-OS bodies — all Rust.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Shell  (apps/vnkey — cross-platform Rust)                    │
+│  ┌────────────┐  ┌───────────────┐  ┌──────────────────────┐  │
+│  │ tray menu  │  │ TOML settings │  │ platform keyboard    │  │
+│  │ (tray-icon)│  │ (serde/toml)  │  │ hook  (trait)        │  │
+│  └────────────┘  └───────────────┘  └──────────┬───────────┘  │
+│                                        macOS ▸ CGEventTap      │
+│                                        Windows ▸ WH_KEYBOARD_LL│
+└────────────────────────────────────────────────┼─────────────┘
+                                                  │ EditActions
+┌─────────────────────────────────────────────────▼────────────┐
+│  Core engine  (crates/vnkey-core)  —  ZERO OS dependencies    │
+│   • Telex / VNI   • syllable validator   • tone placement     │
+│   • composition buffer   • auto-restore   • NFC output        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+Only the keyboard hook and text injection differ per OS; they live behind one
+trait (`apps/vnkey/src/platform/`). Everything else — engine, tray, settings —
+is shared. Adding an OS means adding one `platform/<os>.rs`.
 
 ---
 
@@ -40,76 +69,35 @@ Grab `phacius_vnkey-<version>.dmg`, drag it to Applications, done. No Rust, no t
 
 | Tool | Version |
 |------|---------|
-| macOS | 13 Ventura or later |
-| Xcode Command Line Tools | 15+ |
 | Rust | 1.70+ (via [rustup](https://rustup.rs) or [asdf](https://asdf-vm.com)) |
-| cbindgen | latest (`cargo install cbindgen`) |
+| macOS | 13 Ventura or later (for the macOS build) |
 
-
-### 1. Clone the repo
+### 1. Clone and build
 
 ```bash
 git clone https://github.com/PhaciusPhat/phacius_vnkey.git
 cd phacius_vnkey
+cargo build -p vnkey
 ```
 
-### 2. Install Rust (if needed)
+### 2. Run
 
 ```bash
-# via rustup
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# or via asdf
-asdf plugin add rust
-asdf install rust latest
-asdf set rust latest        # global
-# asdf set rust latest      # project-local (writes .tool-versions)
+cargo run -p vnkey
 ```
 
-### 3. Install cbindgen
+The **VN** icon appears in your menu bar. Grant **Accessibility** permission when
+prompted (System Settings → Privacy & Security → Accessibility), then relaunch.
 
-```bash
-cargo install cbindgen
-```
-
-### 4. Build the Rust engine and generate the C header
-
-```bash
-bash scripts/build-engine.sh
-```
-
-This compiles `crates/vnkey-ffi` in release mode, runs cbindgen to emit
-`apps/macos/Sources/VnkeyC/include/phacius_vnkey_engine.h`, and copies
-`libvnkey_ffi.a` into place for the Swift build.
-
-### 5. Build the macOS app
-
-```bash
-cd apps/macos
-swift build
-```
-
-### 6. Run
-
-```bash
-.build/debug/VnkeyApp &
-```
-
-### 7. Package a distributable `.dmg` (maintainers)
+### 3. Package a distributable `.dmg` (maintainers)
 
 ```bash
 bash scripts/package-app.sh
 ```
 
-Builds the Rust engine, a release Swift binary, assembles `phacius_vnkey.app`,
-ad-hoc signs it, and writes `dist/phacius_vnkey-<version>.dmg` — the file end
-users download. To ship notarized, replace the `codesign --sign -` line in the
-script with your Developer ID and run `xcrun notarytool`.
-
-The **VN** icon appears in your menu bar. On first launch macOS will ask for
-**Accessibility** permission — grant it in System Settings → Privacy & Security
-→ Accessibility. The event tap activates once permission is granted (no restart
-needed).
+Builds the release binary, assembles `phacius_vnkey.app`, ad-hoc signs it, and
+writes `dist/phacius_vnkey-<version>.dmg`. To ship notarized, replace the
+`codesign --sign -` line with your Developer ID and run `xcrun notarytool`.
 
 ---
 
@@ -117,9 +105,14 @@ needed).
 
 | Action | How |
 |--------|-----|
-| Toggle Vietnamese on/off | Click the VN icon → toggle, or press `⌃⌥V` |
-| Switch input method | Click the VN icon → Method → Telex / VNI |
-| Open preferences | Click the VN icon → Preferences… (or `⌘,`) |
+| Toggle Vietnamese on/off | Click the VN icon → **Vietnamese typing** |
+| Switch input method | Click the VN icon → **Telex** / **VNI** |
+| Tone placement | Click the VN icon → **Modern** / **Classic** |
+| Auto-restore English | Click the VN icon → **Auto-restore English** |
+| Quit | Click the VN icon → **Quit vnkey** |
+
+Settings persist to `~/Library/Application Support/vnkey/config.toml` on macOS
+(the OS config dir elsewhere).
 
 ### Telex cheat-sheet
 
@@ -148,18 +141,19 @@ needed).
 ## Development
 
 ```bash
-# Run all Rust tests
-cargo test --all
-
-# Lint
-cargo clippy --all-targets -- -D warnings
-
-# Swift tests (after build-engine.sh)
-cd apps/macos && swift test
+cargo test --all                              # engine + shell tests
+cargo clippy --all-targets -- -D warnings     # lint
+cargo run -p vnkey                            # run the macOS app
 ```
 
-CI runs `cargo test`, `cargo clippy`, and `swift build` on every push via
-`.github/workflows/ci.yml`.
+CI runs `cargo test`, `cargo clippy`, and a Windows `cargo build` on every push
+via `.github/workflows/ci.yml`.
+
+### Windows status
+
+`apps/vnkey/src/platform/windows.rs` is a compiling scaffold (`WH_KEYBOARD_LL` +
+`SendInput`) but is **untested on real hardware**. It needs verification on a
+Windows machine before a Windows release — see the platform module's header.
 
 ---
 
@@ -168,22 +162,25 @@ CI runs `cargo test`, `cargo clippy`, and `swift build` on every push via
 ```
 phacius_vnkey/
 ├── crates/
-│   ├── vnkey-core/      # Pure Rust engine — input methods, validator, tone placement
-│   └── vnkey-ffi/       # C ABI wrapper (cbindgen → phacius_vnkey_engine.h)
+│   └── vnkey-core/      # Pure Rust engine — methods, validator, tone placement
 ├── apps/
-│   └── macos/           # Swift app — the only OS-specific code
-│       ├── Sources/
-│       │   ├── VnkeyC/      # Generated C header + static lib
-│       │   ├── Bridge/      # Swift wrapper over the C API
-│       │   ├── EventTap/    # CGEventTap listener + action synthesizer
-│       │   ├── MenuBar/     # NSStatusItem + menu
-│       │   ├── Preferences/ # SwiftUI preferences window
-│       │   └── VnkeyApp/    # App entry point + AppDelegate
-│       └── Package.swift
+│   └── vnkey/           # Cross-platform Rust shell (the only OS-specific code)
+│       ├── src/
+│       │   ├── main.rs       # tao event loop, menu-bar accessory app
+│       │   ├── config.rs     # TOML settings
+│       │   ├── state.rs      # shared engine + settings
+│       │   ├── tray.rs       # tray-icon / muda menu
+│       │   └── platform/     # per-OS keyboard hook + injection
+│       │       ├── mod.rs         # KeyboardHook trait
+│       │       ├── macos.rs       # CGEventTap + CGEvent injection
+│       │       └── windows.rs     # WH_KEYBOARD_LL + SendInput (scaffold)
+│       └── Info.plist   # macOS bundle metadata
 ├── docs/specs/          # Design documents
 └── scripts/
-    └── build-engine.sh  # Builds Rust, runs cbindgen, copies artifacts
+    └── package-app.sh   # Builds the .app + .dmg
 ```
+
+Design reference: [tuyenvm/OpenKey](https://github.com/tuyenvm/OpenKey).
 
 ---
 

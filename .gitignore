@@ -3,19 +3,6 @@
 **/target/
 Cargo.lock
 
-# Generated FFI artifacts
-*.a
-*.dylib
-*.so
-phacius_vnkey_engine.h
-
-# Swift / Xcode
-.build/
-.swiftpm/
-DerivedData/
-*.xcodeproj/xcuserdata/
-*.xcworkspace/xcuserdata/
-
 # macOS
 .DS_Store
 

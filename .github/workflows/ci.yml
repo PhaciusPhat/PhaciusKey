@@ -17,18 +17,13 @@ jobs:
       - run: cargo test --all
       - run: cargo clippy --all-targets -- -D warnings
 
-  swift:
-    name: Swift — build + test
-    runs-on: macos-latest
+  windows:
+    name: Rust — Windows build
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install cbindgen
-        run: cargo install cbindgen
-      - name: Build Rust engine
-        run: bash scripts/build-engine.sh
-      - name: Swift build
-        working-directory: apps/macos
-        run: swift build
-      - name: Swift test
-        working-directory: apps/macos
-        run: swift test
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Build only the vnkey shell (the Windows platform module is still an
+      # untested scaffold; this catches compile regressions on Windows).
+      - run: cargo build -p vnkey

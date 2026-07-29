@@ -1,0 +1,31 @@
+[package]
+name = "vnkey"
+version = "0.0.3"
+edition = "2021"
+description = "Cross-platform Vietnamese input method (Telex/VNI) — Rust shell over vnkey-core"
+license = "MIT"
+
+[[bin]]
+name = "vnkey"
+path = "src/main.rs"
+
+[dependencies]
+vnkey-core = { path = "../../crates/vnkey-core" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
+tray-icon = "0.19"
+tao = "0.30"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+core-foundation = "0.10"
+foreign-types = "0.5"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_LibraryLoader",
+] }

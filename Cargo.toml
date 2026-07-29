@@ -1,6 +1,6 @@
 [workspace]
 members = [
     "crates/vnkey-core",
-    "crates/vnkey-ffi",
+    "apps/vnkey",
 ]
 resolver = "2"
