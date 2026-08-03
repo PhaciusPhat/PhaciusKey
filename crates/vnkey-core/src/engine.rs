@@ -1,17 +1,20 @@
 use crate::buffer::CompositionBuffer;
 use crate::methods::{InputMethodProcessor, TelexMethod, VniMethod};
 use crate::tone_placement::apply_tone;
-use crate::types::{Config, EditAction, InputMethod, Keystroke};
-use crate::validator::is_valid_prefix;
+use crate::types::{Config, EditAction, InputMethod, Keystroke, Tone};
+use crate::validator::{coda_of, is_valid_prefix, tone_allowed_with_coda};
 
 pub struct Engine {
     buffer: CompositionBuffer,
     config: Config,
+    /// Set once the current word has proved it cannot be Vietnamese. Cleared at
+    /// the next word boundary. While set, keystrokes are echoed verbatim.
+    passthrough: bool,
 }
 
 impl Engine {
     pub fn new(config: Config) -> Self {
-        Self { buffer: CompositionBuffer::new(), config }
+        Self { buffer: CompositionBuffer::new(), config, passthrough: false }
     }
 
     pub fn set_config(&mut self, config: Config) {
@@ -79,14 +82,31 @@ impl Engine {
         let bare = &method_result.bare;
         let tone = method_result.tone;
 
-        // Check whether the current buffer could still form a valid Vietnamese syllable.
-        // If definitely not, and auto-restore is on, output raw keystrokes.
-        if self.config.auto_restore && !is_valid_prefix(bare) {
-            // Auto-restore: emit raw characters and stop buffering.
+        // Can this still become a Vietnamese syllable? Three ways it cannot:
+        // the letters don't fit Vietnamese structure, the input method saw an
+        // illegal sequence (a vowel after a tone key), or the tone is impossible
+        // on this coda (only sắc/nặng ride a stop consonant).
+        // The tone/coda rule only applies once a tone exists: mid-word "viêt" is a
+        // legitimate intermediate state (the tone key comes last in Telex), and a
+        // bare onset like "t" must not be read as a coda.
+        let impossible = !is_valid_prefix(bare)
+            || method_result.is_foreign
+            || (tone != Tone::Flat && !tone_allowed_with_coda(tone, coda_of(bare)));
+
+        if self.config.auto_restore && impossible {
+            // Hand back exactly what was typed, and *stay* in passthrough until
+            // the next word boundary. Re-composing the rest of the word is what
+            // turned "jira" into "jỉa": the 'j' was emitted, state was reset,
+            // then "ira" was composed afresh with 'r' eaten as hỏi.
+            self.passthrough = true;
+        }
+
+        if self.passthrough {
+            // diff_to (not clear + insert) keeps `displayed` describing what is
+            // actually on screen, so nothing gets eaten by a stale backspace
+            // count on the following keystroke.
             let raw_str = raw.clone();
-            let mut actions = self.buffer.clear_actions();
-            actions.push(EditAction::Insert(raw_str));
-            return actions;
+            return self.buffer.diff_to(&raw_str);
         }
 
         // Apply tone placement to form the target word.
@@ -105,6 +125,7 @@ impl Engine {
         // On boundary, we just need to clear internal state; the text already on
         // screen was kept in sync by recompute(). No extra backspaces needed.
         self.buffer.reset();
+        self.passthrough = false;
 
         let mut actions = vec![];
 
@@ -120,6 +141,7 @@ impl Engine {
     /// Force-reset the buffer (e.g. on mouse click / focus change).
     pub fn reset(&mut self) {
         self.buffer.reset();
+        self.passthrough = false;
     }
 
     /// Returns the string currently displayed on-screen for the active word.

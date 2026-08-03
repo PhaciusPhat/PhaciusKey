@@ -38,6 +38,8 @@ struct TelexState {
     tone: Tone,
     /// Whether this is unambiguously a foreign (non-Vietnamese) word.
     is_foreign: bool,
+    /// Whether a real (non-Flat) tone key has been consumed.
+    tone_applied: bool,
     /// Raw character buffer (for triple-press detection).
     raw: String,
 }
@@ -52,10 +54,36 @@ impl TelexState {
             // Tone keys are applied if the syllable has at least one vowel.
             // 'z' explicitly resets tone to Flat.
             if has_vowel(&self.syllable) || tone == Tone::Flat {
-                self.tone = tone;
+                if self.tone == tone && tone != Tone::Flat {
+                    // Same tone key twice cancels it and types the letter, so
+                    // "ass" is "as" rather than "á" with the second 's' eaten.
+                    self.tone = Tone::Flat;
+                    self.tone_applied = false;
+                    self.syllable.push(lower);
+                } else {
+                    self.tone = tone;
+                    self.tone_applied = tone != Tone::Flat;
+                }
                 return;
             }
             // Otherwise fall through and treat as a literal character.
+        }
+
+        // A vowel arriving after a tone key cannot be Vietnamese: in Telex the
+        // tone comes after the rime. This is what marks "reset", "user" and
+        // "server" as foreign instead of composing "rết", "ủe", "sẻver".
+        if self.tone_applied && is_vowel(lower) {
+            self.is_foreign = true;
+        }
+
+        // --- "uo" + w takes both horns at once ---
+        // Checked before the single-vowel pairs below, which would otherwise put
+        // a horn on the 'o' alone and give "thuơng" instead of "thương".
+        if lower == 'w' && self.syllable.ends_with("uo") {
+            if let Some(new_syl) = apply_horn_cluster(&self.syllable) {
+                self.syllable = new_syl;
+                return;
+            }
         }
 
         // --- Diacritic pair? ---
@@ -69,6 +97,17 @@ impl TelexState {
                     self.syllable = new_syl;
                     return;
                 }
+            }
+        }
+
+        // --- 'w' on a vowel cluster ---
+        // Telex writes ư/ơ with 'w', and the "uo" cluster takes both horns at
+        // once ("thuowng" → "thương", "nguoiw" → "ngươi"). Without this, 'w'
+        // only paired with the vowel directly before it.
+        if lower == 'w' {
+            if let Some(new_syl) = apply_horn_cluster(&self.syllable) {
+                self.syllable = new_syl;
+                return;
             }
         }
 
@@ -146,9 +185,44 @@ fn diacritic_pair(syllable: &str, ch: char) -> Option<PairResult> {
 }
 
 fn has_vowel(s: &str) -> bool {
-    s.chars().any(|c| matches!(c,
-        'a'|'â'|'ă'|'e'|'ê'|'i'|'o'|'ô'|'ơ'|'u'|'ư'|'y'
-    ))
+    s.chars().any(is_vowel)
+}
+
+fn is_vowel(c: char) -> bool {
+    matches!(c, 'a'|'â'|'ă'|'e'|'ê'|'i'|'o'|'ô'|'ơ'|'u'|'ư'|'y')
+}
+
+/// Apply the Telex horn key to the trailing vowel cluster.
+///
+/// "uo" takes both horns together ("thuo" + w → "thươ"); otherwise the last
+/// eligible vowel takes one (u → ư, o → ơ, a → ă). Returns `None` when there is
+/// nothing for 'w' to modify, in which case it is a literal letter.
+fn apply_horn_cluster(syllable: &str) -> Option<String> {
+    // Longest first: the "uo" pair beats the single vowels.
+    if let Some(pos) = syllable.rfind("uo") {
+        let mut out = syllable[..pos].to_string();
+        out.push('ư');
+        out.push('ơ');
+        out.push_str(&syllable[pos + 2..]);
+        return Some(out);
+    }
+
+    let chars: Vec<char> = syllable.chars().collect();
+    for i in (0..chars.len()).rev() {
+        let replacement = match chars[i] {
+            'u' => Some('ư'),
+            'o' => Some('ơ'),
+            'a' => Some('ă'),
+            _ => None,
+        };
+        if let Some(r) = replacement {
+            let mut out: String = chars[..i].iter().collect();
+            out.push(r);
+            out.extend(chars[i + 1..].iter());
+            return Some(out);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

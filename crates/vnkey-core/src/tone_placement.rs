@@ -25,7 +25,7 @@ pub fn apply_tone(word: &str, tone: Tone, mode: TonePlacementMode) -> String {
 /// Find which character index in `chars` should carry the tone mark.
 fn tone_position(chars: &[char], mode: TonePlacementMode) -> Option<usize> {
     // Identify vowel indices.
-    let vowel_indices: Vec<usize> = chars
+    let mut vowel_indices: Vec<usize> = chars
         .iter()
         .enumerate()
         .filter(|(_, &c)| is_vowel(c))
@@ -34,6 +34,17 @@ fn tone_position(chars: &[char], mode: TonePlacementMode) -> Option<usize> {
 
     if vowel_indices.is_empty() {
         return None;
+    }
+
+    // In "gi" and "qu" the second letter is part of the onset, not the nucleus,
+    // so it must never take the tone: "giá" not "gía", "quà" not "qùa". Only
+    // drop it when a real vowel follows — "gì" and "cù" keep theirs.
+    let glide_onset = matches!(
+        (chars.first(), chars.get(1)),
+        (Some('g'), Some('i')) | (Some('q'), Some('u'))
+    );
+    if glide_onset && vowel_indices.len() > 1 && vowel_indices.contains(&1) {
+        vowel_indices.retain(|&i| i != 1);
     }
 
     // --- Modern placement rules ---
@@ -100,12 +111,30 @@ fn modern_position(
     }
 }
 
+/// Classic ("kiểu cũ") placement.
+///
+/// Classic and modern differ only for *open* syllables whose nucleus is one of
+/// the `oa` / `oe` / `uy` families, where the first element is a glide: classic
+/// marks the second vowel (`hoà`, `hoé`, `thuý`), modern the first (`hòa`,
+/// `hóe`, `thúy`). Every other rime — closed syllables, and diphthongs like
+/// `ai`/`ao`/`ia`/`ua` — is identical in both styles.
 fn classic_position(
     vowel_indices: &[usize],
     coda_start: Option<usize>,
-    _chars: &[char],
+    chars: &[char],
 ) -> Option<usize> {
-    modern_position(vowel_indices, coda_start, &[])
+    if coda_start.is_none() && vowel_indices.len() == 2 {
+        let first = chars.get(vowel_indices[0]).copied();
+        let second = chars.get(vowel_indices[1]).copied();
+        let glide_pair = matches!(
+            (first, second),
+            (Some('o'), Some('a')) | (Some('o'), Some('e')) | (Some('u'), Some('y'))
+        );
+        if glide_pair {
+            return Some(vowel_indices[1]);
+        }
+    }
+    modern_position(vowel_indices, coda_start, chars)
 }
 
 /// Find the index where the coda begins (the trailing consonant cluster).
@@ -238,11 +267,37 @@ mod tests {
     }
 
     #[test]
-    fn classic_vs_modern_hoa() {
-        // Modern Vietnamese: "hòa" (tone on 'o', penultimate vowel in open syllable).
-        let m = apply_tone("hoa", Tone::Grave, TonePlacementMode::Modern);
-        let c = apply_tone("hoa", Tone::Grave, TonePlacementMode::Classic);
-        assert_eq!(m, "hòa");
-        assert_eq!(c, "hòa");
+    fn classic_vs_modern_differ_for_glide_nuclei() {
+        // The two styles must actually differ: modern marks the first vowel of an
+        // open oa/oe/uy nucleus, classic the second.
+        for (bare, tone, modern_want, classic_want) in [
+            ("hoa", Tone::Grave, "hòa", "hoà"),
+            ("hoe", Tone::Sharp, "hóe", "hoé"),
+            ("thuy", Tone::Sharp, "thúy", "thuý"),
+        ] {
+            assert_eq!(apply_tone(bare, tone, TonePlacementMode::Modern), modern_want);
+            assert_eq!(apply_tone(bare, tone, TonePlacementMode::Classic), classic_want);
+        }
+    }
+
+    #[test]
+    fn classic_matches_modern_elsewhere() {
+        // Closed syllables and non-glide diphthongs are identical in both styles.
+        for (bare, tone) in [("toan", Tone::Sharp), ("hoang", Tone::Grave), ("mua", Tone::Grave)] {
+            assert_eq!(
+                apply_tone(bare, tone, TonePlacementMode::Modern),
+                apply_tone(bare, tone, TonePlacementMode::Classic),
+            );
+        }
+    }
+
+    #[test]
+    fn glide_onset_never_takes_the_tone() {
+        // "gi" and "qu" are onsets: giá not gía, quà not qùa.
+        assert_eq!(modern("gia", Tone::Sharp), "giá");
+        assert_eq!(modern("qua", Tone::Grave), "quà");
+        // …but a lone nucleus still takes it: gì, cù.
+        assert_eq!(modern("gi", Tone::Grave), "gì");
+        assert_eq!(modern("cu", Tone::Grave), "cù");
     }
 }

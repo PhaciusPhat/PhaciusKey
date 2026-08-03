@@ -1,3 +1,5 @@
+use crate::types::Tone;
+
 /// Returns true if `syllable` (lowercased, NFC) is a legal Vietnamese syllable.
 ///
 /// Checks onset → nucleus → coda compatibility according to standard
@@ -18,8 +20,14 @@ pub fn is_valid_syllable(syllable: &str) -> bool {
     }
 }
 
-/// Returns true if `s` could be a valid prefix of a Vietnamese syllable
-/// (i.e., we should keep buffering rather than auto-restore).
+/// Returns true if `s` could still grow into a valid Vietnamese syllable — i.e.
+/// whether the engine should keep composing rather than hand back raw keys.
+///
+/// This is deliberately structural rather than dictionary-based: onset, then a
+/// nucleus of at most three vowels, then at most one coda cluster. It accepts
+/// *partial* onsets, which the previous version did not — `"q"` (en route to
+/// `"qu"`) and `"n"` (en route to `"ng"`/`"nh"`) were both rejected outright,
+/// which is why `quà` came out as `qùa`.
 pub fn is_valid_prefix(s: &str) -> bool {
     if s.is_empty() {
         return true;
@@ -27,25 +35,75 @@ pub fn is_valid_prefix(s: &str) -> bool {
     let bare = strip_tone_marks(s);
     let s = bare.to_lowercase();
 
-    // A valid prefix is either a known onset, or onset+partial-nucleus, etc.
-    // We use a permissive check: any string that starts with a valid onset
-    // and whose remaining characters are vowels (possibly partial nucleus).
+    // Mid-onset: "q" → "qu", "n" → "ng"/"nh", "ng" → "ngh", "t" → "th"/"tr", …
+    if ONSETS
+        .iter()
+        .any(|o| o.chars().count() > s.chars().count() && o.starts_with(&s))
+    {
+        return true;
+    }
+
     let (onset, rest) = consume_onset(&s);
-    if onset.is_none() && !rest.is_empty() {
-        // No onset consumed — only valid if first char is a vowel (zero onset)
-        let first = rest.chars().next().unwrap();
-        if !is_vowel_char(first) {
+    if onset.is_none() {
+        // Zero onset is legal only when the syllable opens with a vowel. This is
+        // what rejects "jira", "student" ("st"), "first" ("f") and friends.
+        match s.chars().next() {
+            Some(c) if is_vowel_char(c) => {}
+            _ => return false,
+        }
+    }
+    is_valid_rime_prefix(rest)
+}
+
+/// Up to three vowels, then at most one (possibly partial) coda cluster.
+fn is_valid_rime_prefix(rest: &str) -> bool {
+    let mut vowels = 0usize;
+    let mut coda = String::new();
+
+    for ch in rest.chars() {
+        if coda.is_empty() && is_vowel_char(ch) {
+            vowels += 1;
+            if vowels > 3 {
+                return false;
+            }
+        } else if is_coda_char(ch) {
+            coda.push(ch);
+            // Must remain a prefix of some real coda ("n", "ng", "nh", …).
+            if !CODAS.iter().any(|c| c.starts_with(&coda)) {
+                return false;
+            }
+        } else {
             return false;
         }
     }
-    // Rest must be all vowel-ish characters (nucleus/coda partial).
-    let after_onset: &str = onset.map(|_o| rest).unwrap_or(rest);
-    for ch in after_onset.chars() {
-        if !is_vowel_char(ch) && !is_coda_char(ch) {
-            return false;
+
+    // A coda with no nucleus in front of it is not a syllable.
+    vowels != 0 || coda.is_empty()
+}
+
+/// Whether `tone` may occur on a syllable ending in `coda`.
+///
+/// Vietnamese stop codas (`p`, `t`, `c`, `ch`) carry only sắc or nặng — never
+/// ngang, huyền, hỏi or ngã. This is what tells the engine that "sort" → "sỏt"
+/// and "text" → "tẽt" are impossible, so the raw letters should come back.
+pub fn tone_allowed_with_coda(tone: Tone, coda: &str) -> bool {
+    let stop = matches!(coda, "p" | "t" | "c" | "ch");
+    if !stop {
+        return true;
+    }
+    matches!(tone, Tone::Sharp | Tone::Dot)
+}
+
+/// The coda of `syllable`, if it has one. Bare (tone marks are stripped first).
+pub fn coda_of(syllable: &str) -> &'static str {
+    let bare = strip_tone_marks(syllable).to_lowercase();
+    for coda in CODAS {
+        if bare.ends_with(coda) {
+            // "ng"/"nh"/"ch" must win over "g"/"h"/"c"; CODAS is ordered longest-first.
+            return coda;
         }
     }
-    true
+    ""
 }
 
 // ── Tone stripping ──────────────────────────────────────────────────────────
@@ -191,17 +249,16 @@ fn validate_combination(onset: &str, nucleus: &str, coda: &str) -> bool {
                 return false;
             }
         }
-        "nh" => {
-            if !matches!(nucleus, "a" | "ă" | "â" | "e" | "ê" | "i" | "ia" | "iê" | "oa" | "u" | "uy") {
-                return false;
-            }
+        "nh"
+            if !matches!(
+                nucleus,
+                "a" | "ă" | "â" | "e" | "ê" | "i" | "ia" | "iê" | "oa" | "u" | "uy"
+            ) =>
+        {
+            return false;
         }
-        "ng"
-            // Broad compatibility — disallow only clearly invalid combos
-            if matches!(nucleus, "iê" | "iêu") && coda == "ng" => {
-                // "iêng" is not standard
-                return false;
-            }
+        // "iêng" is standard and common — tiếng, miếng, riêng, kiêng. The
+        // previous rule rejected it outright.
         _ => {}
     }
 
