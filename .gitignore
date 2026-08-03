@@ -11,3 +11,6 @@ Cargo.lock
 
 # Packaged app + installer
 /dist/
+
+# Upstream clones kept locally for reference only
+/reference/

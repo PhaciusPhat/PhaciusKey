@@ -1,0 +1,27 @@
+# Site settings
+icon_title: PhaciusKey - Vietnamese Keyboard
+title: PhaciusKey
+description: Bộ gõ tiếng Việt viết bằng Rust — dành cho macOS
+
+# GitHub Pages: served from the main branch, /docs folder
+url: "https://phaciusphat.github.io"
+baseurl: "/phacius_vnkey"
+
+# Project
+repo: https://github.com/PhaciusPhat/phacius_vnkey
+version: 0.0.5
+
+# Google-analytics (leave the id empty to keep the tag off)
+google-analytics:
+  id: ""
+
+# Keep repo-internal files out of the published site
+exclude:
+  - specs
+  - src
+  - node_modules
+  - package.json
+  - gulpfile.js
+  - Gemfile
+  - Gemfile.lock
+  - README.md

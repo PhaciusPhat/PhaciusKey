@@ -1,0 +1,270 @@
+<style>
+  .pk-content {
+    font-family: 'Montserrat', 'Antic Slab', sans-serif;
+    background: #1a222c;
+    color: #c2cbd6;
+    position: relative;
+    z-index: 2;
+    line-height: 1.7;
+  }
+  .pk-content .pk-wrap {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+  .pk-content section {
+    padding: 60px 0;
+    border-bottom: 1px solid #2a3440;
+  }
+  .pk-content h2 {
+    color: #ffffff;
+    font-size: 30px;
+    font-weight: 700;
+    margin: 0 0 10px;
+    padding: 0;
+  }
+  .pk-content h3 {
+    color: #ffffff;
+    font-size: 21px;
+    font-weight: 600;
+    margin: 26px 0 6px;
+    padding: 0;
+  }
+  .pk-content p { font-size: 17px; margin: 12px 0; }
+  .pk-content ul, .pk-content ol { font-size: 17px; padding-left: 24px; }
+  .pk-content li { margin: 8px 0; }
+  .pk-content a { color: #6ab0ff; }
+  .pk-content code {
+    background: #222c38;
+    border: 1px solid #2f3a47;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 15px;
+    color: #d8e0ea;
+  }
+  .pk-content .lead { font-size: 19px; color: #aab3c0; }
+  .pk-feature-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 24px;
+  }
+  .pk-feature {
+    flex: 1 1 260px;
+    background: #222c38;
+    border: 1px solid #2f3a47;
+    border-radius: 10px;
+    padding: 20px 22px;
+  }
+  .pk-feature h3 { margin-top: 0; font-size: 18px; }
+  .pk-feature p { font-size: 15px; margin: 6px 0 0; color: #aab3c0; }
+  .pk-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 20px;
+  }
+  .pk-keys table {
+    flex: 1 1 320px;
+    border-collapse: collapse;
+    font-size: 16px;
+    background: #222c38;
+    border: 1px solid #2f3a47;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .pk-keys caption {
+    caption-side: top;
+    text-align: left;
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 18px;
+    padding: 0 0 8px;
+  }
+  .pk-keys th, .pk-keys td {
+    padding: 8px 14px;
+    text-align: left;
+    border-bottom: 1px solid #2a3440;
+  }
+  .pk-keys th { color: #aab3c0; font-weight: 600; font-size: 14px; }
+  .pk-keys tr:last-child td { border-bottom: none; }
+  .pk-keys td:first-child { font-family: monospace; color: #9fe870; }
+  .pk-faq dt { font-weight: 700; color: #ffffff; margin-top: 20px; font-size: 18px; }
+  .pk-faq dd { margin: 6px 0 0; padding: 0; font-size: 16px; color: #aab3c0; }
+  .pk-scroll-hint {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3;
+    color: #fff;
+    font-size: 34px;
+    text-decoration: none;
+    animation: pkBounce 1.6s infinite;
+  }
+  @keyframes pkBounce {
+    0%, 100% { transform: translateX(-50%) translateY(0); }
+    50%      { transform: translateX(-50%) translateY(10px); }
+  }
+  .pk-footer {
+    background: #1a222c;
+    color: #aeb6c2;
+    text-align: center;
+    padding: 30px 20px;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 14px;
+    position: relative;
+    z-index: 2;
+    border-top: 1px solid #2a3440;
+  }
+  .pk-footer a { color: #cdd5e0; text-decoration: none; margin: 0 8px; }
+  .pk-footer a:hover { color: #fff; text-decoration: underline; }
+</style>
+
+<main class="pk-content" id="noidung">
+  <div class="pk-wrap">
+
+    <section id="gioi-thieu">
+      <h2>PhaciusKey là gì?</h2>
+      <p class="lead">
+        <strong>PhaciusKey</strong> là bộ gõ tiếng Việt miễn phí và
+        <strong>mã nguồn mở</strong>, được viết hoàn toàn bằng <strong>Rust</strong>.
+        Bộ gõ giúp bạn gõ tiếng Việt có dấu bằng kiểu <strong>Telex</strong> hoặc
+        <strong>VNI</strong> trong mọi ứng dụng trên máy — từ trình duyệt, ứng dụng
+        soạn thảo đến cửa sổ dòng lệnh.
+      </p>
+      <p>
+        PhaciusKey được thiết kế theo hướng một bộ máy xử lý dùng chung, không phụ thuộc
+        hệ điều hành, kèm phần móc bàn phím riêng cho từng nền tảng.
+        <strong>Hiện tại PhaciusKey chạy trên macOS</strong> (macOS 13 Ventura trở lên,
+        máy Mac dùng chip Apple Silicon). Phần hỗ trợ Windows đang được phát triển và
+        chưa có bản phát hành.
+      </p>
+      <p>
+        Ứng dụng <strong>không hiển thị quảng cáo</strong> và
+        <strong>không thu thập dữ liệu</strong> của người dùng. Toàn bộ mã nguồn được
+        công khai theo giấy phép MIT tại
+        <a href="{{ site.repo }}" target="_blank" rel="noopener">GitHub</a>.
+      </p>
+
+      <h3>Kiểu gõ và bảng mã</h3>
+      <ul>
+        <li><strong>Kiểu gõ:</strong> Telex và VNI.</li>
+        <li><strong>Bảng mã:</strong> Unicode dựng sẵn (NFC) — bảng mã tiêu chuẩn dùng cho macOS và web.</li>
+        <li>Bật/tắt gõ tiếng Việt ngay từ biểu tượng trên thanh menu.</li>
+      </ul>
+    </section>
+
+    <section id="tinh-nang">
+      <h2>Tính năng nổi bật</h2>
+      <div class="pk-feature-grid">
+        <div class="pk-feature">
+          <h3>Kiểm tra chính tả thông minh</h3>
+          <p>Chỉ đặt dấu khi kết quả là một âm tiết tiếng Việt hợp lệ, nhờ vậy hạn chế việc bỏ dấu sai chỗ.</p>
+        </div>
+        <div class="pk-feature">
+          <h3>Tự động phục hồi từ tiếng Anh</h3>
+          <p>Khi bạn gõ một từ không phải tiếng Việt, PhaciusKey tự trả lại đúng các ký tự gốc bạn đã bấm.</p>
+        </div>
+        <div class="pk-feature">
+          <h3>Kiểu đặt dấu Mới và Cũ</h3>
+          <p>Chọn giữa cách đặt dấu hiện đại (<code>hòa</code>) và cách đặt dấu cổ điển (<code>hoà</code>).</p>
+        </div>
+        <div class="pk-feature">
+          <h3>Điều khiển từ thanh menu</h3>
+          <p>Bật/tắt bộ gõ, đổi kiểu gõ, đổi cách đặt dấu — tất cả nằm trong menu của biểu tượng <strong>VN</strong>.</p>
+        </div>
+        <div class="pk-feature">
+          <h3>Nhẹ và miễn phí</h3>
+          <p>Viết bằng Rust, chạy nền gọn nhẹ, hoàn toàn miễn phí và mã nguồn mở theo giấy phép MIT.</p>
+        </div>
+        <div class="pk-feature">
+          <h3>Lưu thiết lập của bạn</h3>
+          <p>Các lựa chọn được ghi vào <code>~/Library/Application Support/vnkey/config.toml</code> và tự áp dụng ở lần mở sau.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="huong-dan">
+      <h2>Hướng dẫn cài đặt và sử dụng</h2>
+
+      <h3>Trên macOS</h3>
+      <ol>
+        <li>Mở trang <a href="{{ site.repo }}/releases/latest" target="_blank" rel="noopener">bản phát hành mới nhất</a> và tải tập tin <strong>PhaciusKey-&lt;phiên bản&gt;.dmg</strong> ở mục <em>Assets</em>.</li>
+        <li>Nhấp đúp vào tập tin <code>.dmg</code> vừa tải, rồi kéo <strong>PhaciusKey</strong> vào thư mục <strong>Applications</strong>.</li>
+        <li>Mở <strong>PhaciusKey</strong> từ Applications. Biểu tượng <strong>VN</strong> sẽ xuất hiện trên thanh menu.</li>
+        <li>Ở lần mở đầu tiên, macOS sẽ hỏi quyền <strong>Accessibility</strong>. Hãy cấp quyền trong <em>System Settings → Privacy &amp; Security → Accessibility</em>, sau đó <strong>mở lại ứng dụng</strong> (phần móc bàn phím chỉ được cài đặt một lần khi khởi động).</li>
+        <li>Nhấp vào biểu tượng <strong>VN</strong> để chọn <strong>kiểu gõ</strong> (Telex/VNI) và <strong>cách đặt dấu</strong> (Mới/Cũ).</li>
+      </ol>
+
+      <h3>Bảng phím tắt</h3>
+      <div class="pk-keys">
+        <table>
+          <caption>Telex</caption>
+          <thead><tr><th>Gõ</th><th>Kết quả</th></tr></thead>
+          <tbody>
+            <tr><td>aa</td><td>â</td></tr>
+            <tr><td>aw</td><td>ă</td></tr>
+            <tr><td>ee</td><td>ê</td></tr>
+            <tr><td>oo</td><td>ô</td></tr>
+            <tr><td>ow</td><td>ơ</td></tr>
+            <tr><td>uw</td><td>ư</td></tr>
+            <tr><td>dd</td><td>đ</td></tr>
+            <tr><td>s / f / r / x / j</td><td>sắc / huyền / hỏi / ngã / nặng</td></tr>
+            <tr><td>z</td><td>bỏ dấu</td></tr>
+          </tbody>
+        </table>
+        <table>
+          <caption>VNI</caption>
+          <thead><tr><th>Gõ</th><th>Kết quả</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>sắc</td></tr>
+            <tr><td>2</td><td>huyền</td></tr>
+            <tr><td>3</td><td>hỏi</td></tr>
+            <tr><td>4</td><td>ngã</td></tr>
+            <tr><td>5</td><td>nặng</td></tr>
+            <tr><td>6</td><td>dấu mũ (â ê ô)</td></tr>
+            <tr><td>7</td><td>dấu móc (ơ ư)</td></tr>
+            <tr><td>8</td><td>dấu á (ă)</td></tr>
+            <tr><td>9</td><td>đ</td></tr>
+            <tr><td>0</td><td>bỏ dấu</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="faq">
+      <h2>Câu hỏi thường gặp</h2>
+      <dl class="pk-faq">
+        <dt>PhaciusKey có miễn phí không?</dt>
+        <dd>Có. PhaciusKey miễn phí và mã nguồn mở theo giấy phép MIT.</dd>
+
+        <dt>Vì sao ứng dụng cần quyền Accessibility?</dt>
+        <dd>Bộ gõ cần đọc và chỉnh sửa phím bạn bấm để dựng chữ tiếng Việt, nên macOS yêu cầu quyền Accessibility. Sau khi cấp quyền, bạn cần mở lại ứng dụng.</dd>
+
+        <dt>macOS báo ứng dụng đến từ nhà phát triển không xác định?</dt>
+        <dd>Bản phát hành được ký ở dạng ad-hoc và chưa qua công chứng (notarize) của Apple. Hãy nhấp chuột phải vào <strong>PhaciusKey</strong> trong Applications → <strong>Open</strong> → <strong>Open</strong> lần nữa. Hoặc chạy lệnh <code>xattr -dr com.apple.quarantine /Applications/PhaciusKey.app</code>.</dd>
+
+        <dt>PhaciusKey có thu thập dữ liệu của tôi không?</dt>
+        <dd>Không. Ứng dụng không thu thập, không lưu trữ và không gửi đi nội dung bạn gõ. Mọi thiết lập chỉ nằm trên máy của bạn.</dd>
+
+        <dt>Đã có bản cho Windows chưa?</dt>
+        <dd>Chưa. Phần móc bàn phím cho Windows đã có trong mã nguồn nhưng chưa được kiểm thử trên máy thật, nên chưa có bản phát hành cho Windows.</dd>
+
+        <dt>Máy Mac Intel có dùng được không?</dt>
+        <dd>Bản phát hành hiện tại dành cho máy Mac chip Apple Silicon, chạy macOS 13 Ventura trở lên. Trên máy khác bạn có thể tự dịch mã nguồn theo hướng dẫn trong repo.</dd>
+      </dl>
+    </section>
+
+  </div>
+</main>
+
+<footer class="pk-footer">
+  <p>
+    <a href="{{ '/' | relative_url }}">Trang chủ</a> ·
+    <a href="{{ '/privacy.html' | relative_url }}">Chính sách bảo mật</a> ·
+    <a href="{{ site.repo }}" target="_blank" rel="noopener">GitHub</a> ·
+    <a href="{{ site.repo }}/issues" target="_blank" rel="noopener">Báo lỗi</a>
+  </p>
+  <p>&copy; 2026 Phacius — PhaciusKey, bộ gõ tiếng Việt mã nguồn mở. Giấy phép MIT.</p>
+</footer>

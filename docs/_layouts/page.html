@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi" xmlns="http://www.w3.org/1999/xhtml">
+  {% include head.html %}
+  <body>
+    <style>
+      .pk-page {
+        font-family: 'Montserrat', 'Antic Slab', sans-serif;
+        background: #1a222c;
+        color: #c2cbd6;
+        line-height: 1.7;
+        min-height: 100vh;
+      }
+      .pk-page .pk-topbar {
+        background: #1a222c;
+        padding: 16px 20px;
+        text-align: center;
+        border-bottom: 1px solid #2a3440;
+      }
+      .pk-page .pk-topbar a { color: #fff; text-decoration: none; font-size: 20px; font-weight: 700; }
+      .pk-page .pk-wrap { max-width: 820px; margin: 0 auto; padding: 40px 20px 60px; }
+      .pk-page h1 { color: #ffffff; font-size: 32px; margin: 0 0 8px; padding: 0; }
+      .pk-page h2 { color: #ffffff; font-size: 22px; margin: 30px 0 8px; padding: 0; }
+      .pk-page p, .pk-page li { font-size: 17px; }
+      .pk-page ul { padding-left: 24px; }
+      .pk-page a { color: #6ab0ff; }
+      .pk-page .pk-updated { color: #8a93a0; font-size: 15px; }
+      .pk-page code {
+        background: #222c38; border: 1px solid #2f3a47; border-radius: 4px;
+        padding: 1px 6px; font-size: 15px; color: #d8e0ea;
+      }
+      .pk-footer {
+        background: #1a222c; color: #aeb6c2; text-align: center;
+        padding: 30px 20px; font-family: 'Montserrat', sans-serif; font-size: 14px;
+        border-top: 1px solid #2a3440;
+      }
+      .pk-footer a { color: #cdd5e0; text-decoration: none; margin: 0 8px; }
+      .pk-footer a:hover { color: #fff; text-decoration: underline; }
+    </style>
+    <div class="pk-page">
+      <div class="pk-topbar">
+        <a href="{{ '/' | relative_url }}">PhaciusKey</a>
+      </div>
+      <div class="pk-wrap">
+        {{ content }}
+      </div>
+    </div>
+    <footer class="pk-footer">
+      <p>
+        <a href="{{ '/' | relative_url }}">Trang chủ</a> ·
+        <a href="{{ '/privacy.html' | relative_url }}">Chính sách bảo mật</a> ·
+        <a href="{{ site.repo }}" target="_blank" rel="noopener">GitHub</a>
+      </p>
+      <p>&copy; 2026 Phacius — PhaciusKey, bộ gõ tiếng Việt mã nguồn mở. Giấy phép MIT.</p>
+    </footer>
+  </body>
+</html>
