@@ -12,6 +12,14 @@ bundle install       # needs Ruby + Bundler
 bundle exec jekyll serve
 ```
 
+## Releasing
+
+Bump `version:` in `_config.yml` as part of every app release. The download
+button and install steps build version-exact URLs from it
+(`releases/download/v<version>/PhaciusKey-<version>.dmg`) rather than using
+`releases/latest`, because the release workflow publishes with `--prerelease`
+and GitHub's "latest" only ever points at a non-prerelease.
+
 ## Editing
 
 - Page copy lives in `_includes/content.html` and `_includes/header.html`.
