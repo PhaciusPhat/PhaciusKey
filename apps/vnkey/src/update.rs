@@ -15,6 +15,14 @@ pub fn releases_url() -> String {
     format!("https://github.com/{REPO}/releases/latest")
 }
 
+/// Direct URL of a release's macOS disk image.
+///
+/// Built from the tag rather than `releases/latest`, which only ever resolves to
+/// a non-prerelease and would 302 to the releases list.
+pub fn dmg_url(version: &str) -> String {
+    format!("https://github.com/{REPO}/releases/download/v{version}/PhaciusKey-{version}.dmg")
+}
+
 /// URL to file a new bug report, pre-filled with the app version.
 pub fn new_issue_url() -> String {
     format!(

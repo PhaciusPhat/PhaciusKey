@@ -114,6 +114,21 @@ writes `dist/PhaciusKey-<version>.dmg`. To ship notarized, replace the
 Settings persist to `~/Library/Application Support/vnkey/config.toml` on macOS
 (the OS config dir elsewhere).
 
+### Automatic updates
+
+New releases are installed automatically: the app checks GitHub at startup, and
+if a newer version exists it downloads the `.dmg`, verifies it with `codesign`,
+replaces its own bundle, relaunches, and shows a dialog saying what happened.
+Set `auto_update = false` in `config.toml` to be notified only.
+
+> **Accessibility must be granted again after each update.** macOS ties the
+> Accessibility permission to the app's code signature, and releases are ad-hoc
+> signed (`codesign --sign -`), so every build has a different identity and the
+> grant cannot carry over. The post-update dialog says so. Signing with a
+> Developer ID certificate is what makes updates fully seamless — no code change
+> is needed for that, `installer::install` already reports the live permission
+> state.
+
 ### Telex cheat-sheet
 
 | Keys | Result | Keys | Result |

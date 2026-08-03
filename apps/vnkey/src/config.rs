@@ -36,6 +36,12 @@ pub struct Settings {
     pub placement: Placement,
     /// Restore raw keystrokes for non-Vietnamese (e.g. English) words.
     pub auto_restore: bool,
+    /// Download and install new releases automatically. Set false to go back to
+    /// being notified only.
+    pub auto_update: bool,
+    /// Version that last ran. Compared against the running build at startup to
+    /// notice that a self-update happened, so the user can be told.
+    pub last_seen_version: Option<String>,
 }
 
 impl Default for Settings {
@@ -45,6 +51,8 @@ impl Default for Settings {
             method: Method::Telex,
             placement: Placement::Modern,
             auto_restore: true,
+            auto_update: true,
+            last_seen_version: None,
         }
     }
 }
