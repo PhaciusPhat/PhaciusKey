@@ -155,10 +155,11 @@ fn nguoi() {
 
 #[test]
 fn triple_a_restores() {
-    assert_eq!(displayed_after("aaa"), "a");
+    // Pressing 'a' a third time undoes â and types itself: "aa".
+    assert_eq!(displayed_after("aaa"), "aa");
 }
 
 #[test]
 fn triple_e_restores() {
-    assert_eq!(displayed_after("eee"), "e");
+    assert_eq!(displayed_after("eee"), "ee");
 }

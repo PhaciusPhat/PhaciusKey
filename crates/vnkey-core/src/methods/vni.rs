@@ -23,26 +23,69 @@ impl InputMethodProcessor for VniMethod {
 pub fn process_vni(raw: &str) -> MethodResult {
     let mut syllable = String::new();
     let mut tone = Tone::Flat;
+    // Set when a digit undid its own tone/diacritic, which makes the word literal
+    // text: "đoán" then '1' is "đoan1", not "đoán" with the digit swallowed.
+    let mut cancelled = false;
 
     for ch in raw.chars() {
+        let tone_digit = match ch {
+            '1' => Some(Tone::Sharp),
+            '2' => Some(Tone::Grave),
+            '3' => Some(Tone::Hook),
+            '4' => Some(Tone::Tilde),
+            '5' => Some(Tone::Dot),
+            '0' => Some(Tone::Flat),
+            _ => None,
+        };
+
+        if let Some(new_tone) = tone_digit {
+            if !has_vowel(&syllable) {
+                syllable.push(ch);
+            } else if tone == new_tone && new_tone != Tone::Flat {
+                // Same digit twice: undo the tone and type the digit.
+                tone = Tone::Flat;
+                cancelled = true;
+                syllable.push(ch);
+            } else {
+                tone = new_tone;
+            }
+            continue;
+        }
+
         match ch {
-            '1' => { if has_vowel(&syllable) { tone = Tone::Sharp; } else { syllable.push(ch); } }
-            '2' => { if has_vowel(&syllable) { tone = Tone::Grave; } else { syllable.push(ch); } }
-            '3' => { if has_vowel(&syllable) { tone = Tone::Hook;  } else { syllable.push(ch); } }
-            '4' => { if has_vowel(&syllable) { tone = Tone::Tilde; } else { syllable.push(ch); } }
-            '5' => { if has_vowel(&syllable) { tone = Tone::Dot;   } else { syllable.push(ch); } }
-            '0' => { if has_vowel(&syllable) { tone = Tone::Flat;  } else { syllable.push(ch); } }
+            // Each diacritic digit first tries to undo itself, then to apply.
             '6' => {
-                if apply_circumflex(&mut syllable) { /* applied */ } else { syllable.push(ch); }
+                if undo_diacritic(&mut syllable, &['â', 'ê', 'ô']) {
+                    cancelled = true;
+                    syllable.push(ch);
+                } else if !apply_circumflex(&mut syllable) {
+                    syllable.push(ch);
+                }
             }
             '7' => {
-                if apply_horn(&mut syllable) { /* applied */ } else { syllable.push(ch); }
+                if undo_diacritic(&mut syllable, &['ư', 'ơ']) {
+                    cancelled = true;
+                    syllable.push(ch);
+                } else if !apply_horn(&mut syllable) {
+                    syllable.push(ch);
+                }
             }
             '8' => {
-                if apply_breve(&mut syllable) { /* applied */ } else { syllable.push(ch); }
+                if undo_diacritic(&mut syllable, &['ă']) {
+                    cancelled = true;
+                    syllable.push(ch);
+                } else if !apply_breve(&mut syllable) {
+                    syllable.push(ch);
+                }
             }
             '9' => {
-                if apply_stroke_d(&mut syllable) { /* applied */ } else { syllable.push(ch); }
+                if syllable.starts_with('đ') {
+                    syllable.replace_range(..'đ'.len_utf8(), "d");
+                    cancelled = true;
+                    syllable.push(ch);
+                } else if !apply_stroke_d(&mut syllable) {
+                    syllable.push(ch);
+                }
             }
             _ => {
                 syllable.push(ch.to_lowercase().next().unwrap_or(ch));
@@ -50,13 +93,47 @@ pub fn process_vni(raw: &str) -> MethodResult {
         }
     }
 
-    MethodResult { bare: syllable, tone, is_foreign: false }
+    let literal = cancelled.then(|| syllable.clone());
+    MethodResult { bare: syllable, tone, is_foreign: false, literal }
+}
+
+/// If the last vowel carries one of `marked`, put it back to its base form.
+/// Returns whether anything was undone.
+fn undo_diacritic(s: &mut String, marked: &[char]) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    for i in (0..chars.len()).rev() {
+        if !is_vowel(chars[i]) {
+            continue;
+        }
+        if !marked.contains(&chars[i]) {
+            // The most recent vowel does not carry this mark, so there is nothing
+            // to undo — the digit should apply normally instead.
+            return false;
+        }
+        let base = match chars[i] {
+            'â' => 'a',
+            'ê' => 'e',
+            'ô' => 'o',
+            'ơ' => 'o',
+            'ư' => 'u',
+            'ă' => 'a',
+            other => other,
+        };
+        let mut out: String = chars[..i].iter().collect();
+        out.push(base);
+        out.extend(chars[i + 1..].iter());
+        *s = out;
+        return true;
+    }
+    false
+}
+
+fn is_vowel(c: char) -> bool {
+    matches!(c, 'a'|'â'|'ă'|'e'|'ê'|'i'|'o'|'ô'|'ơ'|'u'|'ư'|'y')
 }
 
 fn has_vowel(s: &str) -> bool {
-    s.chars().any(|c| matches!(c,
-        'a'|'â'|'ă'|'e'|'ê'|'i'|'o'|'ô'|'ơ'|'u'|'ư'|'y'
-    ))
+    s.chars().any(is_vowel)
 }
 
 /// Apply circumflex to the last eligible vowel (a→â, e→ê, o→ô). Returns true if applied.
@@ -165,6 +242,19 @@ mod tests {
     #[test]
     fn stroke_d() {
         assert_eq!(vni("d9").0, "đ");
+    }
+
+    #[test]
+    fn repeating_a_digit_undoes_it_and_types_it() {
+        // The reported case: "đoán" then '1' is "đoan1".
+        assert_eq!(vni("d9oan11").0, "đoan1");
+        assert_eq!(vni("a11").0, "a1");
+        assert_eq!(vni("a66").0, "a6");
+        assert_eq!(vni("o77").0, "o7");
+        assert_eq!(vni("a88").0, "a8");
+        assert_eq!(vni("d99").0, "d9");
+        // A *different* digit still just changes the tone.
+        assert_eq!(vni("a12"), ("a".into(), Tone::Grave));
     }
 
     #[test]

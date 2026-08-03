@@ -19,8 +19,8 @@ impl InputMethodProcessor for TelexMethod {
 ///     aa → â,  aw → ă,  ee → ê,  oo → ô,  ow → ơ,  uw → ư,  dd → đ
 ///   Tone suffix (last unambiguous tone key wins):
 ///     s → sắc, f → huyền, r → hỏi, x → ngã, j → nặng, z → ngang (remove)
-///   Restore: typing the base letter a third time restores the base letter
-///     (e.g. "aaa" → "a").
+///   Undo: pressing a diacritic or tone key again undoes it and types the key
+///     literally — "aaa" → "aa", "ass" → "as".
 pub fn process_telex(raw: &str) -> MethodResult {
     // Work character by character, maintaining a mutable state.
     let mut state = TelexState::default();
@@ -40,6 +40,8 @@ struct TelexState {
     is_foreign: bool,
     /// Whether a real (non-Flat) tone key has been consumed.
     tone_applied: bool,
+    /// Whether a key undid its own diacritic/tone, making this literal text.
+    cancelled: bool,
     /// Raw character buffer (for triple-press detection).
     raw: String,
 }
@@ -59,6 +61,7 @@ impl TelexState {
                     // "ass" is "as" rather than "á" with the second 's' eaten.
                     self.tone = Tone::Flat;
                     self.tone_applied = false;
+                    self.cancelled = true;
                     self.syllable.push(lower);
                 } else {
                     self.tone = tone;
@@ -95,6 +98,7 @@ impl TelexState {
                 }
                 PairResult::Restore(new_syl) => {
                     self.syllable = new_syl;
+                    self.cancelled = true;
                     return;
                 }
             }
@@ -116,10 +120,12 @@ impl TelexState {
     }
 
     fn finish(self) -> MethodResult {
+        let literal = self.cancelled.then(|| self.syllable.clone());
         MethodResult {
             bare: self.syllable,
             tone: self.tone,
             is_foreign: self.is_foreign,
+            literal,
         }
     }
 }
@@ -142,6 +148,8 @@ fn tone_key(ch: char) -> Option<Tone> {
 
 enum PairResult {
     Replace(String),
+    /// The key undid its own diacritic, so the base letter is back *and* the key
+    /// is typed literally: "aa" gives â, a third 'a' gives "aa".
     Restore(String),
 }
 
@@ -154,31 +162,31 @@ fn diacritic_pair(syllable: &str, ch: char) -> Option<PairResult> {
     match (last, ch) {
         // aa → â  (if already ends with â → restore to a)
         ('a', 'a') => Some(PairResult::Replace(format!("{prefix}â"))),
-        ('â', 'a') => Some(PairResult::Restore(format!("{prefix}a"))),
+        ('â', 'a') => Some(PairResult::Restore(format!("{prefix}aa"))),
 
         // aw → ă
         ('a', 'w') => Some(PairResult::Replace(format!("{prefix}ă"))),
-        ('ă', 'w') => Some(PairResult::Restore(format!("{prefix}a"))),
+        ('ă', 'w') => Some(PairResult::Restore(format!("{prefix}aw"))),
 
         // ee → ê
         ('e', 'e') => Some(PairResult::Replace(format!("{prefix}ê"))),
-        ('ê', 'e') => Some(PairResult::Restore(format!("{prefix}e"))),
+        ('ê', 'e') => Some(PairResult::Restore(format!("{prefix}ee"))),
 
         // oo → ô
         ('o', 'o') => Some(PairResult::Replace(format!("{prefix}ô"))),
-        ('ô', 'o') => Some(PairResult::Restore(format!("{prefix}o"))),
+        ('ô', 'o') => Some(PairResult::Restore(format!("{prefix}oo"))),
 
         // ow → ơ
         ('o', 'w') => Some(PairResult::Replace(format!("{prefix}ơ"))),
-        ('ơ', 'w') => Some(PairResult::Restore(format!("{prefix}o"))),
+        ('ơ', 'w') => Some(PairResult::Restore(format!("{prefix}ow"))),
 
         // uw → ư
         ('u', 'w') => Some(PairResult::Replace(format!("{prefix}ư"))),
-        ('ư', 'w') => Some(PairResult::Restore(format!("{prefix}u"))),
+        ('ư', 'w') => Some(PairResult::Restore(format!("{prefix}uw"))),
 
         // dd → đ
         ('d', 'd') => Some(PairResult::Replace(format!("{prefix}đ"))),
-        ('đ', 'd') => Some(PairResult::Restore(format!("{prefix}d"))),
+        ('đ', 'd') => Some(PairResult::Restore(format!("{prefix}dd"))),
 
         _ => None,
     }
@@ -269,10 +277,11 @@ mod tests {
 
     #[test]
     fn restore_on_triple() {
-        // "aaa" → first 'aa' → â, then 'a' → restore to 'a'
-        assert_eq!(telex("aaa").0, "a");
-        assert_eq!(telex("eee").0, "e");
-        assert_eq!(telex("ddd").0, "d");
+        // "aaa" → 'aa' gives â, the third 'a' undoes it and types itself: "aa".
+        assert_eq!(telex("aaa").0, "aa");
+        assert_eq!(telex("eee").0, "ee");
+        assert_eq!(telex("ddd").0, "dd");
+        assert_eq!(telex("oww").0, "ow");
     }
 
     #[test]

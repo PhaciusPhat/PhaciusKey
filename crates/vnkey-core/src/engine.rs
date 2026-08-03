@@ -47,22 +47,34 @@ impl Engine {
 
     /// Handle a Backspace/Delete keystroke.
     ///
-    /// Vietnamese diacritics can fold several raw keystrokes into one displayed
-    /// character (e.g. telex "as" → "á"), so a single Backspace must undo the
-    /// last *raw* keystroke and recompute the word, not just drop one on-screen
-    /// character. Returns actions to reconcile the display; an empty vec means
-    /// "we're not composing — let the native Backspace pass through untouched."
+    /// Deletes one **displayed character** — the letter the user can see. It used
+    /// to undo the last raw *keystroke* and recompute instead, which made
+    /// Backspace strip the tone mark rather than remove a letter: "đoán" became
+    /// "đoan" (undoing the `s` of "ddoans") when the user expected "đoá".
+    ///
+    /// Composing then stops for this word. The raw keystrokes no longer describe
+    /// what is on screen — deleting the 'n' of "đoán" would need raw "ddoas",
+    /// i.e. removing a key from the middle — and inventing a raw sequence for the
+    /// remaining text would corrupt the next keystroke. So the text stays on
+    /// screen as-is and the next key starts a fresh composition.
+    ///
+    /// An empty vec means "we're not composing — let the native Backspace pass
+    /// through untouched."
     pub fn backspace(&mut self) -> Vec<EditAction> {
-        if !self.config.enabled || self.buffer.raw.is_empty() {
+        if !self.config.enabled || self.buffer.displayed.is_empty() {
             return vec![];
         }
 
-        self.buffer.pop();
-        if self.buffer.raw.is_empty() {
-            // Nothing left to compose; clear the (now stale) displayed word.
-            return self.buffer.clear_actions();
-        }
-        self.recompute()
+        let mut chars: Vec<char> = self.buffer.displayed.chars().collect();
+        chars.pop();
+        let target: String = chars.into_iter().collect();
+
+        let actions = self.buffer.diff_to(&target);
+        // Forget the word: `reset` clears our record without emitting anything,
+        // so the remaining text stays on screen untouched.
+        self.buffer.reset();
+        self.passthrough = false;
+        actions
     }
 
     /// Recompute the target Vietnamese word from the current raw buffer,
@@ -93,6 +105,11 @@ impl Engine {
             || method_result.is_foreign
             || (tone != Tone::Flat && !tone_allowed_with_coda(tone, coda_of(bare)));
 
+        // Was this word already literal before this keystroke? If so the raw keys
+        // are the only faithful rendering — a cancel inside an already-foreign word
+        // ("press") has lost a consumed tone key from `bare`.
+        let was_passthrough = self.passthrough;
+
         if self.config.auto_restore && impossible {
             // Hand back exactly what was typed, and *stay* in passthrough until
             // the next word boundary. Re-composing the rest of the word is what
@@ -105,8 +122,20 @@ impl Engine {
             // diff_to (not clear + insert) keeps `displayed` describing what is
             // actually on screen, so nothing gets eaten by a stale backspace
             // count on the following keystroke.
-            let raw_str = raw.clone();
-            return self.buffer.diff_to(&raw_str);
+            let text = match &method_result.literal {
+                // A key that undid its own diacritic makes the word literal text,
+                // and the method already dropped the undone mark: "ddd" → "dd".
+                Some(literal) if !was_passthrough && !method_result.is_foreign => literal.clone(),
+                _ => raw.clone(),
+            };
+            return self.buffer.diff_to(&text);
+        }
+
+        // Still a possible Vietnamese syllable, but a key undid its own diacritic,
+        // so show that text verbatim rather than re-applying anything: "aaa" → "aa".
+        if let Some(literal) = &method_result.literal {
+            let literal = apply_case(literal, &raw);
+            return self.buffer.diff_to(&literal);
         }
 
         // Apply tone placement to form the target word.
@@ -266,18 +295,28 @@ mod tests {
     }
 
     #[test]
-    fn backspace_undoes_last_raw_keystroke_not_last_char() {
+    fn backspace_deletes_a_displayed_character() {
         // Telex "as" folds 2 raw keystrokes into 1 displayed char: "á".
         let mut e = engine();
         type_str(&mut e, "as");
         assert_eq!(e.buffer.displayed, "á");
 
-        // Backspace must undo the "s" (raw), leaving "a" composing — not just
-        // blindly delete the on-screen character and stop.
+        // Backspace deletes the character the user sees, and stops composing.
         let actions = e.backspace();
-        assert_eq!(e.buffer.raw, "a");
-        assert_eq!(e.buffer.displayed, "a");
-        assert_eq!(actions, vec![EditAction::Backspace(1), EditAction::Insert("a".into())]);
+        assert_eq!(actions, vec![EditAction::Backspace(1)]);
+        assert!(e.buffer.raw.is_empty());
+        assert!(e.buffer.displayed.is_empty());
+    }
+
+    #[test]
+    fn backspace_removes_a_letter_not_the_tone_mark() {
+        // The reported bug: "đoán" must become "đoá", not "đoan".
+        let mut e = engine();
+        type_str(&mut e, "ddoans");
+        assert_eq!(e.buffer.displayed, "đoán");
+
+        let actions = e.backspace();
+        assert_eq!(actions, vec![EditAction::Backspace(1)]);
     }
 
     #[test]
@@ -297,13 +336,14 @@ mod tests {
     }
 
     #[test]
-    fn backspace_then_retype_reproduces_tone() {
-        // Regression: after backspacing off a tone key, re-typing it should
-        // reconstruct the same word rather than leaving stale state behind.
+    fn typing_after_backspace_starts_a_fresh_composition() {
+        // Backspace ends the composition, so the next keys compose from scratch
+        // rather than resurrecting stale state.
         let mut e = engine();
         type_str(&mut e, "as");
         e.backspace();
-        type_str(&mut e, "s");
-        assert_eq!(e.buffer.displayed, "á");
+        let actions = type_str(&mut e, "b");
+        assert_eq!(actions, vec![EditAction::Insert("b".into())]);
+        assert_eq!(e.buffer.raw, "b");
     }
 }

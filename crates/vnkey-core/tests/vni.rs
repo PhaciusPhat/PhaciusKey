@@ -88,6 +88,7 @@ fn combined_horn_and_tone() {
 
 #[test]
 fn viet() {
-    // vi + e6 + t + 5 → "việt" (circumflex e, nặng tone)
-    assert_eq!(displayed_after("vie65t5"), "việt");
+    // vi + e6 + t + 5 → "việt" (circumflex e, nặng tone). Note the tone digit is
+    // pressed once: pressing '5' twice now cancels it and types the digit.
+    assert_eq!(displayed_after("vie6t5"), "việt");
 }

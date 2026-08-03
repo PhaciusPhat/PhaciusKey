@@ -15,6 +15,10 @@ pub struct MethodResult {
     pub tone: Tone,
     /// True if the sequence is unambiguously non-Vietnamese (auto-restore).
     pub is_foreign: bool,
+    /// Exact text to show when a key undid its own diacritic or tone, which makes
+    /// the word literal text ("aaa" → "aa", VNI "…an11" → "…an1"). `None` means
+    /// "echo the raw keystrokes" if this word turns out not to be Vietnamese.
+    pub literal: Option<String>,
 }
 
 pub trait InputMethodProcessor {
