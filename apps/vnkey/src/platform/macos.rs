@@ -191,8 +191,11 @@ unsafe extern "C" fn tap_callback(
 
     // The global on/off shortcut outranks everything below — it must work even
     // while typing is disabled for the focused app, or the user could never
-    // re-enable from the keyboard.
-    if is_toggle_shortcut(keycode, cg.get_flags()) {
+    // re-enable from the keyboard. Auto-repeat is ignored, or holding the combo
+    // would flip the setting many times a second.
+    if is_toggle_shortcut(keycode, cg.get_flags())
+        && cg.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
+    {
         state::update(|s| s.enabled = !s.enabled);
         state::reset();
         return ptr::null_mut(); // the combo is ours; don't let the app see it
