@@ -221,6 +221,11 @@ pub fn announce_update(from: &str, to: &str, needs_permission: bool) {
     show_dialog(&body);
 }
 
+/// Show a plain informational dialog (e.g. "up to date" after a manual check).
+pub fn announce(body: &str) {
+    show_dialog(body);
+}
+
 /// Tell the user an automatic update failed. They can still update by hand.
 pub fn announce_failure(version: &str, error: &str) {
     show_dialog(&format!(

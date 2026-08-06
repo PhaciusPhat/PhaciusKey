@@ -4,6 +4,7 @@
 //! `muda` crates, which render a native `NSStatusItem` on macOS and a
 //! `Shell_NotifyIcon` tray on Windows from the same code.
 
+use std::cell::RefCell;
 use std::io;
 use std::path::Path;
 
@@ -29,6 +30,9 @@ pub struct Tray {
     pub update: MenuItem,
     pub report: MenuItem,
     pub quit: MenuItem,
+    /// Newest known release, once a check has found one. `RefCell`: the tray
+    /// lives on the main thread only (the menu items aren't `Send` anyway).
+    available: RefCell<Option<String>>,
 }
 
 impl Tray {
@@ -118,12 +122,42 @@ impl Tray {
             update,
             report,
             quit,
+            available: RefCell::new(None),
         })
     }
 
-    /// Highlight the "Check for updates" item when a newer version is available.
+    /// Highlight the "Check for updates" item when a newer version is available
+    /// and remember it, so a click can install that version immediately instead
+    /// of just opening the releases page.
     pub fn set_update_available(&self, version: &str) {
-        self.update.set_text(format!("⬇ Update to v{version}…"));
+        *self.available.borrow_mut() = Some(version.to_string());
+        self.update.set_text(format!("⬇ Update to v{version} now"));
+        self.update.set_enabled(true);
+    }
+
+    /// The release a click on the update item would install, when one is known.
+    pub fn available_version(&self) -> Option<String> {
+        self.available.borrow().clone()
+    }
+
+    /// A manual check is in flight — freeze the item so a second click can't
+    /// start a second one.
+    pub fn set_update_checking(&self) {
+        self.update.set_text("Checking for updates…");
+        self.update.set_enabled(false);
+    }
+
+    /// A download+install is in flight. On success the app relaunches; on
+    /// failure `set_update_available` re-arms the item for a retry.
+    pub fn set_update_installing(&self, version: &str) {
+        self.update.set_text(format!("Installing v{version}…"));
+        self.update.set_enabled(false);
+    }
+
+    /// Back to the resting state (up to date, or a check failed).
+    pub fn set_update_idle(&self) {
+        self.update.set_text("Check for updates…");
+        self.update.set_enabled(true);
     }
 
     /// Push the current settings into the menu's checkmarks and the tray glyph.

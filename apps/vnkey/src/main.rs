@@ -58,6 +58,8 @@ enum UserEvent {
     UpdateInstalled(std::path::PathBuf),
     /// An automatic update failed (version, reason).
     UpdateFailed(String, String),
+    /// A user-requested "check now" finished (newer version / up to date / error).
+    UpdateCheckDone(Result<Option<String>, String>),
     /// Settings or the focused app changed off the main thread (toggle
     /// shortcut, app switch) — re-sync the tray.
     StateChanged,
@@ -137,6 +139,9 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 // Only self-update from a real bundle, and only if the user has
                 // not turned it off.
                 if state::settings().auto_update && installer::app_bundle().is_some() {
+                    if let Some(tray) = &tray {
+                        tray.set_update_installing(&version);
+                    }
                     spawn_update_install(proxy.clone(), version);
                 }
             }
@@ -147,7 +152,34 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             }
             Event::UserEvent(UserEvent::UpdateFailed(version, reason)) => {
                 eprintln!("[vnkey] automatic update to {version} failed: {reason}");
+                // Re-arm the menu item so the user can click to retry.
+                if let Some(tray) = &tray {
+                    tray.set_update_available(&version);
+                }
                 installer::announce_failure(&version, &reason);
+            }
+            Event::UserEvent(UserEvent::UpdateCheckDone(result)) => {
+                if let Some(tray) = &tray {
+                    match result {
+                        Ok(Some(version)) => {
+                            // The user asked for an update, not a notification:
+                            // go straight into the install.
+                            tray.set_update_available(&version);
+                            start_install(tray, &proxy, version);
+                        }
+                        Ok(None) => {
+                            tray.set_update_idle();
+                            installer::announce(&format!(
+                                "PhaciusKey {} is up to date.",
+                                update::CURRENT
+                            ));
+                        }
+                        Err(e) => {
+                            tray.set_update_idle();
+                            installer::announce(&format!("Could not check for updates.\n\n{e}"));
+                        }
+                    }
+                }
             }
             Event::UserEvent(UserEvent::StateChanged) => {
                 if let Some(tray) = &tray {
@@ -171,7 +203,7 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
         // Drain menu clicks.
         while let Ok(menu_event) = menu_channel.try_recv() {
             if let Some(tray) = &tray {
-                handle_menu_event(tray, &menu_event.id, control_flow);
+                handle_menu_event(tray, &proxy, &menu_event.id, control_flow);
             }
         }
 
@@ -249,6 +281,18 @@ fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
     });
 }
 
+/// Kick off an immediate install of `version`, reflecting it in the menu item.
+/// Outside a `.app` bundle self-update is impossible, so fall back to opening
+/// the releases page for a manual download.
+fn start_install(tray: &Tray, proxy: &EventLoopProxy<UserEvent>, version: String) {
+    if installer::app_bundle().is_some() {
+        tray.set_update_installing(&version);
+        spawn_update_install(proxy.clone(), version);
+    } else {
+        update::open_url(&update::releases_url());
+    }
+}
+
 /// If the version on disk changed since the last run, we were self-updated —
 /// tell the user, and note whether they must re-grant Accessibility.
 fn announce_completed_update() {
@@ -265,7 +309,12 @@ fn announce_completed_update() {
     }
 }
 
-fn handle_menu_event(tray: &Tray, id: &MenuId, control_flow: &mut ControlFlow) {
+fn handle_menu_event(
+    tray: &Tray,
+    proxy: &EventLoopProxy<UserEvent>,
+    id: &MenuId,
+    control_flow: &mut ControlFlow,
+) {
     use config::{Method, Placement};
 
     if id == tray.quit.id() {
@@ -273,7 +322,19 @@ fn handle_menu_event(tray: &Tray, id: &MenuId, control_flow: &mut ControlFlow) {
         return;
     }
     if id == tray.update.id() {
-        update::open_url(&update::releases_url());
+        // Update *now*: install the known release directly, or check first and
+        // install whatever the check finds. Opening the releases page (the old
+        // behavior) is now only the fallback for builds that can't self-update.
+        match tray.available_version() {
+            Some(version) => start_install(tray, proxy, version),
+            None => {
+                tray.set_update_checking();
+                let proxy = proxy.clone();
+                std::thread::spawn(move || {
+                    let _ = proxy.send_event(UserEvent::UpdateCheckDone(update::check_for_newer()));
+                });
+            }
+        }
         return;
     }
     if id == tray.report.id() {
