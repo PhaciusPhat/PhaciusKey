@@ -104,8 +104,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "dist/PhaciusKey-${{ steps.version.outputs.version }}.dmg" \
-            --title "PhaciusKey ${{ steps.version.outputs.version }}" \
-            --generate-notes \
-            --prerelease
+          # A release for this tag may already exist (e.g. a re-run, or a release
+          # cut locally per CONTRIBUTING's fallback) — upload into it instead of
+          # failing, replacing any existing DMG asset.
+          DMG="dist/PhaciusKey-${{ steps.version.outputs.version }}.dmg"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists — uploading the DMG to it."
+            gh release upload "$GITHUB_REF_NAME" "$DMG" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$DMG" \
+              --title "PhaciusKey ${{ steps.version.outputs.version }}" \
+              --generate-notes \
+              --prerelease
+          fi
