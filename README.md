@@ -195,8 +195,6 @@ phacius_vnkey/
     └── package-app.sh   # Builds the .app + .dmg
 ```
 
-Design reference: [tuyenvm/OpenKey](https://github.com/tuyenvm/OpenKey).
-
 ---
 
 ## License
