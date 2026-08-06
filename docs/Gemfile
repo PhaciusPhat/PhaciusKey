@@ -1,2 +1,10 @@
 source "https://rubygems.org"
 gem 'github-pages'
+
+# Stdlib gems that Jekyll 3.x expects but modern Ruby (3.4+) no longer bundles;
+# needed for local `bundle exec jekyll build`, harmless on GitHub's builders.
+gem 'csv'
+gem 'base64'
+gem 'bigdecimal'
+gem 'logger'
+gem 'webrick'

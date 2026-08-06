@@ -18,10 +18,8 @@ google-analytics:
 # Keep repo-internal files out of the published site
 exclude:
   - specs
-  - src
+  - vendor
   - node_modules
-  - package.json
-  - gulpfile.js
   - Gemfile
   - Gemfile.lock
   - README.md
