@@ -31,6 +31,7 @@
 // No console window on Windows release builds.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 
+mod autostart;
 mod config;
 mod installer;
 mod platform;
@@ -50,8 +51,6 @@ use crate::platform::{Hook, KeyboardHook};
 use crate::tray::Tray;
 
 /// Events posted to the main loop from background work.
-// Every variant is about updates; the shared prefix is the clearest naming here.
-#[allow(clippy::enum_variant_names)]
 enum UserEvent {
     /// A newer release is available (version string, no leading `v`).
     UpdateAvailable(String),
@@ -59,6 +58,9 @@ enum UserEvent {
     UpdateInstalled(std::path::PathBuf),
     /// An automatic update failed (version, reason).
     UpdateFailed(String, String),
+    /// Settings or the focused app changed off the main thread (toggle
+    /// shortcut, app switch) — re-sync the tray.
+    StateChanged,
 }
 
 fn main() {
@@ -74,6 +76,9 @@ fn main() {
 
     // Load persisted settings and initialize the shared engine state.
     let settings = Settings::load();
+    // Re-assert the login item every launch: it self-heals a moved bundle, and
+    // removes the agent if the user turned the setting off by editing the file.
+    autostart::apply(settings.start_at_login);
     state::init(settings);
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
@@ -94,6 +99,16 @@ fn main() {
 fn run(event_loop: EventLoop<UserEvent>) -> ! {
     let proxy = event_loop.create_proxy();
     let menu_channel = MenuEvent::receiver();
+
+    // Wake the loop when a background thread (the keyboard hook) changes state,
+    // so the tray reflects a shortcut-toggle or app switch immediately. The
+    // proxy goes behind a Mutex only to make the callback Sync.
+    let tray_sync = std::sync::Mutex::new(event_loop.create_proxy());
+    state::set_on_change(Box::new(move || {
+        if let Ok(proxy) = tray_sync.lock() {
+            let _ = proxy.send_event(UserEvent::StateChanged);
+        }
+    }));
 
     // Built after the loop starts (StartCause::Init), per tray-icon guidance.
     let mut tray: Option<Tray> = None;
@@ -133,6 +148,11 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             Event::UserEvent(UserEvent::UpdateFailed(version, reason)) => {
                 eprintln!("[vnkey] automatic update to {version} failed: {reason}");
                 installer::announce_failure(&version, &reason);
+            }
+            Event::UserEvent(UserEvent::StateChanged) => {
+                if let Some(tray) = &tray {
+                    tray.refresh(&state::settings(), state::current_app().as_deref());
+                }
             }
             _ => {}
         }
@@ -263,6 +283,16 @@ fn handle_menu_event(tray: &Tray, id: &MenuId, control_flow: &mut ControlFlow) {
 
     let updated = if id == tray.toggle.id() {
         state::update(|s| s.enabled = !s.enabled)
+    } else if id == tray.app_toggle.id() {
+        // Flip the focused app in/out of the disabled list.
+        let Some(app) = state::current_app() else { return };
+        state::update(|s| {
+            if s.disabled_for(Some(&app)) {
+                s.disabled_apps.retain(|d| !d.eq_ignore_ascii_case(&app));
+            } else {
+                s.disabled_apps.push(app.clone());
+            }
+        })
     } else if id == tray.telex.id() {
         state::update(|s| s.method = Method::Telex)
     } else if id == tray.vni.id() {
@@ -273,10 +303,14 @@ fn handle_menu_event(tray: &Tray, id: &MenuId, control_flow: &mut ControlFlow) {
         state::update(|s| s.placement = Placement::Classic)
     } else if id == tray.auto_restore.id() {
         state::update(|s| s.auto_restore = !s.auto_restore)
+    } else if id == tray.start_login.id() {
+        let updated = state::update(|s| s.start_at_login = !s.start_at_login);
+        autostart::apply(updated.start_at_login);
+        updated
     } else {
         return;
     };
 
     // Reflect the change back into the menu checkmarks and tray glyph.
-    tray.refresh(&updated);
+    tray.refresh(&updated, state::current_app().as_deref());
 }

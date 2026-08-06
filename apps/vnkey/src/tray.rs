@@ -7,10 +7,11 @@
 use std::io;
 use std::path::Path;
 
+use tray_icon::menu::accelerator::{Accelerator, Code, Modifiers};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::config::{Method, Placement, Settings};
+use crate::config::{parse_shortcut, Method, Placement, Settings, Shortcut};
 use crate::png_write;
 use crate::update;
 
@@ -18,11 +19,13 @@ use crate::update;
 pub struct Tray {
     tray: TrayIcon,
     pub toggle: CheckMenuItem,
+    pub app_toggle: CheckMenuItem,
     pub telex: CheckMenuItem,
     pub vni: CheckMenuItem,
     pub modern: CheckMenuItem,
     pub classic: CheckMenuItem,
     pub auto_restore: CheckMenuItem,
+    pub start_login: CheckMenuItem,
     pub update: MenuItem,
     pub report: MenuItem,
     pub quit: MenuItem,
@@ -36,7 +39,14 @@ impl Tray {
             false,
             None,
         );
-        let toggle = CheckMenuItem::new("Vietnamese typing", true, settings.enabled, None);
+        // The accelerator is a *hint*: the global toggle actually fires from the
+        // keyboard hook (an accessory app's menu key-equivalents only work while
+        // its menu is open). Unparseable shortcut string → no hint, no shortcut.
+        let accel = parse_shortcut(&settings.toggle_shortcut).and_then(accelerator_for);
+        let toggle = CheckMenuItem::new("Vietnamese typing", true, settings.enabled, accel);
+        // Text and enabled-state follow the focused app; until the first
+        // keystroke reveals one, there is nothing to toggle.
+        let app_toggle = CheckMenuItem::new("Enable in current app", false, true, None);
 
         let telex = CheckMenuItem::new("Telex", true, settings.method == Method::Telex, None);
         let vni = CheckMenuItem::new("VNI", true, settings.method == Method::Vni, None);
@@ -62,6 +72,8 @@ impl Tray {
 
         let auto_restore =
             CheckMenuItem::new("Auto-restore English", true, settings.auto_restore, None);
+        let start_login =
+            CheckMenuItem::new("Start at login", true, settings.start_at_login, None);
         let update = MenuItem::new("Check for updates…", true, None);
         let report = MenuItem::new("Report an issue…", true, None);
         let quit = MenuItem::new("Quit PhaciusKey", true, None);
@@ -72,10 +84,12 @@ impl Tray {
             &header,
             &sep(),
             &toggle,
+            &app_toggle,
             &sep(),
             &method_menu,
             &tone_menu,
             &auto_restore,
+            &start_login,
             &sep(),
             &update,
             &report,
@@ -94,11 +108,13 @@ impl Tray {
         Ok(Self {
             tray,
             toggle,
+            app_toggle,
             telex,
             vni,
             modern,
             classic,
             auto_restore,
+            start_login,
             update,
             report,
             quit,
@@ -111,15 +127,64 @@ impl Tray {
     }
 
     /// Push the current settings into the menu's checkmarks and the tray glyph.
-    pub fn refresh(&self, settings: &Settings) {
+    /// `current_app` is the app receiving keystrokes, when the hook knows it.
+    pub fn refresh(&self, settings: &Settings, current_app: Option<&str>) {
         self.toggle.set_checked(settings.enabled);
+        match current_app {
+            Some(app) => {
+                self.app_toggle.set_text(format!("Enable in {app}"));
+                self.app_toggle.set_enabled(true);
+                self.app_toggle.set_checked(!settings.disabled_for(Some(app)));
+            }
+            None => {
+                self.app_toggle.set_text("Enable in current app");
+                self.app_toggle.set_enabled(false);
+                self.app_toggle.set_checked(true);
+            }
+        }
         self.telex.set_checked(settings.method == Method::Telex);
         self.vni.set_checked(settings.method == Method::Vni);
         self.modern.set_checked(settings.placement == Placement::Modern);
         self.classic.set_checked(settings.placement == Placement::Classic);
         self.auto_restore.set_checked(settings.auto_restore);
-        let _ = self.tray.set_icon(Some(status_icon(settings.enabled)));
+        self.start_login.set_checked(settings.start_at_login);
+        // The glyph shows what a keystroke would do *right now*, so a per-app
+        // disable turns it pink even while the master toggle is on.
+        let effective = settings.enabled && !settings.disabled_for(current_app);
+        let _ = self.tray.set_icon(Some(status_icon(effective)));
     }
+}
+
+/// The menu-item accelerator hint matching a parsed [`Shortcut`].
+fn accelerator_for(sc: Shortcut) -> Option<Accelerator> {
+    let mut mods = Modifiers::empty();
+    if sc.ctrl {
+        mods |= Modifiers::CONTROL;
+    }
+    if sc.shift {
+        mods |= Modifiers::SHIFT;
+    }
+    if sc.alt {
+        mods |= Modifiers::ALT;
+    }
+    if sc.cmd {
+        mods |= Modifiers::SUPER;
+    }
+    let code = match sc.key {
+        'a' => Code::KeyA, 'b' => Code::KeyB, 'c' => Code::KeyC, 'd' => Code::KeyD,
+        'e' => Code::KeyE, 'f' => Code::KeyF, 'g' => Code::KeyG, 'h' => Code::KeyH,
+        'i' => Code::KeyI, 'j' => Code::KeyJ, 'k' => Code::KeyK, 'l' => Code::KeyL,
+        'm' => Code::KeyM, 'n' => Code::KeyN, 'o' => Code::KeyO, 'p' => Code::KeyP,
+        'q' => Code::KeyQ, 'r' => Code::KeyR, 's' => Code::KeyS, 't' => Code::KeyT,
+        'u' => Code::KeyU, 'v' => Code::KeyV, 'w' => Code::KeyW, 'x' => Code::KeyX,
+        'y' => Code::KeyY, 'z' => Code::KeyZ,
+        '0' => Code::Digit0, '1' => Code::Digit1, '2' => Code::Digit2, '3' => Code::Digit3,
+        '4' => Code::Digit4, '5' => Code::Digit5, '6' => Code::Digit6, '7' => Code::Digit7,
+        '8' => Code::Digit8, '9' => Code::Digit9,
+        ' ' => Code::Space,
+        _ => return None,
+    };
+    Some(Accelerator::new(Some(mods), code))
 }
 
 // ── Icon rendering ─────────────────────────────────────────────────────────────

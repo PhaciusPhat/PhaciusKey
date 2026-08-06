@@ -15,14 +15,32 @@ use crate::config::Settings;
 struct Shell {
     engine: Engine,
     settings: Settings,
+    /// Name of the app currently receiving keystrokes (from the platform hook).
+    current_app: Option<String>,
 }
 
 static SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 
+/// Called after any state change that the tray must reflect. Set once by the
+/// main loop; invoked from whichever thread made the change (the tap thread for
+/// the toggle shortcut and app switches), so it must only *signal* the main
+/// loop, never touch UI itself.
+static ON_CHANGE: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+pub fn set_on_change(f: Box<dyn Fn() + Send + Sync>) {
+    let _ = ON_CHANGE.set(f);
+}
+
+fn notify() {
+    if let Some(f) = ON_CHANGE.get() {
+        f();
+    }
+}
+
 /// Initialize the global shell state. Call once at startup.
 pub fn init(settings: Settings) {
     let engine = Engine::new(settings.to_core());
-    let _ = SHELL.set(Mutex::new(Shell { engine, settings }));
+    let _ = SHELL.set(Mutex::new(Shell { engine, settings, current_app: None }));
 }
 
 fn with<R>(f: impl FnOnce(&mut Shell) -> R) -> Option<R> {
@@ -59,11 +77,43 @@ pub fn settings() -> Settings {
 /// Mutate the settings, push them into the engine, persist to disk, and return
 /// the updated snapshot.
 pub fn update(f: impl FnOnce(&mut Settings)) -> Settings {
-    with(|s| {
+    let updated = with(|s| {
         f(&mut s.settings);
         s.engine.set_config(s.settings.to_core());
         s.settings.save();
         s.settings.clone()
     })
-    .unwrap_or_default()
+    .unwrap_or_default();
+    notify();
+    updated
+}
+
+/// Record which app is receiving keystrokes. On a change of app the
+/// composition buffer is stale (different text field), so it is reset.
+// Only fed by the macOS hook today, like `reset`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn set_current_app(name: &str) {
+    let changed = with(|s| {
+        if s.current_app.as_deref() == Some(name) {
+            return false;
+        }
+        s.current_app = Some(name.to_string());
+        s.engine.reset();
+        true
+    })
+    .unwrap_or(false);
+    if changed {
+        notify();
+    }
+}
+
+/// Name of the app currently receiving keystrokes, if known.
+pub fn current_app() -> Option<String> {
+    with(|s| s.current_app.clone()).flatten()
+}
+
+/// Whether Vietnamese typing is turned off for the current app.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn current_app_disabled() -> bool {
+    with(|s| s.settings.disabled_for(s.current_app.as_deref())).unwrap_or(false)
 }

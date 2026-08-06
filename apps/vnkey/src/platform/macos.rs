@@ -8,7 +8,8 @@
 //!
 //! Event creation and injection still use the safe `core-graphics` API.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::os::raw::c_void;
 use std::ptr;
@@ -27,6 +28,7 @@ use foreign_types::ForeignType;
 use vnkey_core::EditAction;
 
 use super::KeyboardHook;
+use crate::config;
 use crate::state;
 
 /// Sentinel written into `eventSourceUserData` of every event we synthesize, so
@@ -72,6 +74,12 @@ extern "C" {
 extern "C" {
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
+}
+
+extern "C" {
+    /// libproc: fills `buffer` with the executable path of `pid`. Returns the
+    /// path length, or <= 0 on failure. Part of libSystem — no extra link flag.
+    fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
 }
 
 thread_local! {
@@ -179,6 +187,30 @@ unsafe extern "C" fn tap_callback(
         return event;
     }
 
+    let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+
+    // The global on/off shortcut outranks everything below — it must work even
+    // while typing is disabled for the focused app, or the user could never
+    // re-enable from the keyboard.
+    if is_toggle_shortcut(keycode, cg.get_flags()) {
+        state::update(|s| s.enabled = !s.enabled);
+        state::reset();
+        return ptr::null_mut(); // the combo is ours; don't let the app see it
+    }
+
+    // Track which app receives this keystroke, so per-app disable and the tray
+    // menu's "Enable in <app>" item follow the user's focus.
+    let pid = cg.get_integer_value_field(EventField::EVENT_TARGET_UNIX_PROCESS_ID);
+    if let Some(name) = app_name_for_pid(pid) {
+        state::set_current_app(&name);
+    }
+    if state::current_app_disabled() {
+        // Everything passes through untouched in a disabled app, including
+        // Backspace — the engine holds no composition here.
+        state::reset();
+        return event;
+    }
+
     // Keys pressed with Command/Control/Option are shortcuts (⌘Tab, ⌃C, …), and
     // Fn-flagged keys are arrows / function keys. None are Vietnamese input:
     // reset composition (a shortcut is a word boundary) and pass them through
@@ -198,7 +230,6 @@ unsafe extern "C" fn tap_callback(
     // keystroke from the composition buffer (which can represent more than
     // one on-screen character, e.g. telex "as" → "á") and redraw, rather than
     // being read as a character and fed into the buffer like ordinary input.
-    let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
     if keycode == VK_DELETE {
         let actions = state::backspace();
         if actions.is_empty() {
@@ -232,6 +263,89 @@ unsafe extern "C" fn tap_callback(
 
     inject(&actions);
     ptr::null_mut() // swallow the original keystroke
+}
+
+/// Whether this keydown is the configured enable/disable shortcut.
+///
+/// Matched by *keycode* rather than the produced character: with Control held,
+/// `CGEventKeyboardGetUnicodeString` reports control characters, not letters.
+/// The modifier set must match exactly, so ⌃⇧V never also fires on ⌘⌃⇧V.
+fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
+    let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
+        return false;
+    };
+    let Some(want) = keycode_for(sc.key) else {
+        return false;
+    };
+    if keycode != want {
+        return false;
+    }
+    flags.contains(CGEventFlags::CGEventFlagCommand) == sc.cmd
+        && flags.contains(CGEventFlags::CGEventFlagControl) == sc.ctrl
+        && flags.contains(CGEventFlags::CGEventFlagAlternate) == sc.alt
+        && flags.contains(CGEventFlags::CGEventFlagShift) == sc.shift
+}
+
+/// ANSI-layout virtual keycode for a shortcut key. Layout-independent for
+/// letters/digits on the keyboards we can reasonably support without
+/// `UCKeyTranslate`; unknown keys disable the shortcut rather than guessing.
+fn keycode_for(c: char) -> Option<u16> {
+    Some(match c {
+        'a' => 0, 's' => 1, 'd' => 2, 'f' => 3, 'h' => 4, 'g' => 5, 'z' => 6, 'x' => 7,
+        'c' => 8, 'v' => 9, 'b' => 11, 'q' => 12, 'w' => 13, 'e' => 14, 'r' => 15,
+        'y' => 16, 't' => 17, '1' => 18, '2' => 19, '3' => 20, '4' => 21, '6' => 22,
+        '5' => 23, '9' => 25, '7' => 26, '8' => 28, '0' => 29, 'o' => 31, 'u' => 32,
+        'i' => 34, 'p' => 35, 'l' => 37, 'j' => 38, 'k' => 40, 'n' => 45, 'm' => 46,
+        ' ' => 49,
+        _ => return None,
+    })
+}
+
+thread_local! {
+    /// pid → app name, cached because the tap sees every keystroke. All lookups
+    /// happen on the tap thread. A recycled pid could serve a stale name until
+    /// restart; accepted, since the alternative is a path lookup per key.
+    static APP_NAMES: RefCell<HashMap<i64, String>> = RefCell::new(HashMap::new());
+}
+
+/// Human-readable name of the app that owns `pid` — the `.app` bundle name when
+/// there is one ("Safari"), else the executable name.
+fn app_name_for_pid(pid: i64) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+    APP_NAMES.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(name) = cache.get(&pid) {
+            return Some(name.clone());
+        }
+        let name = app_name_from_path(&pid_path(pid as i32)?)?;
+        cache.insert(pid, name.clone());
+        Some(name)
+    })
+}
+
+fn pid_path(pid: i32) -> Option<String> {
+    // PROC_PIDPATHINFO_MAXSIZE = 4 * MAXPATHLEN.
+    let mut buf = [0u8; 4096];
+    let len = unsafe { proc_pidpath(pid, buf.as_mut_ptr() as *mut c_void, buf.len() as u32) };
+    if len <= 0 {
+        return None;
+    }
+    std::str::from_utf8(&buf[..len as usize]).ok().map(str::to_string)
+}
+
+fn app_name_from_path(path: &str) -> Option<String> {
+    // "…/Safari.app/Contents/MacOS/Safari" → "Safari". The *first* .app wins so
+    // a helper nested inside another bundle reports the app the user knows.
+    for component in path.split('/') {
+        if let Some(name) = component.strip_suffix(".app") {
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    path.rsplit('/').find(|s| !s.is_empty()).map(str::to_string)
 }
 
 /// Read the Unicode character the key would have produced.
