@@ -138,7 +138,13 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 // webview path can be exercised without clicking the tray.
                 if std::env::args().any(|a| a == "--settings-window") {
                     match SettingsWindow::new(target, proxy.clone()) {
-                        Ok(win) => settings_win = Some(win),
+                        // show(): an accessory app isn't active when the window
+                        // is built, so without an explicit focus it can appear
+                        // behind the frontmost app.
+                        Ok(win) => {
+                            win.show();
+                            settings_win = Some(win);
+                        }
                         Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
                     }
                 }
@@ -248,7 +254,13 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                     match &settings_win {
                         Some(win) => win.show(),
                         None => match SettingsWindow::new(target, proxy.clone()) {
-                            Ok(win) => settings_win = Some(win),
+                            // show() here too: an accessory app isn't active,
+                            // so a fresh window can open behind the frontmost
+                            // app without an explicit focus.
+                            Ok(win) => {
+                                win.show();
+                                settings_win = Some(win);
+                            }
                             Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
                         },
                     }

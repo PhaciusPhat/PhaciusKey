@@ -97,9 +97,20 @@ fn state_json(s: &Settings, current_app: Option<&str>) -> String {
     }
     names.sort_by_key(|n| n.to_ascii_lowercase());
 
+    // Row state mirrors the tray's per-app checkbox: effective state in
+    // per-app mode, exclusion *intent* otherwise. Rendering effective state
+    // outside per-app mode would make every row a dead control while the
+    // master toggle is off (flipping one would snap straight back).
     let apps: Vec<Value> = names
         .iter()
-        .map(|name| json!({ "name": name, "on": s.vietnamese_on(Some(name)) }))
+        .map(|name| {
+            let on = if s.per_app_mode {
+                s.vietnamese_on(Some(name))
+            } else {
+                !s.disabled_for(Some(name))
+            };
+            json!({ "name": name, "on": on })
+        })
         .collect();
 
     json!({
@@ -193,16 +204,18 @@ fn apply_set(v: &Value) {
     }
 }
 
-/// Set `app`'s effective Vietnamese state, using the same precedence the rest
-/// of the app does: turning ON lifts the hard exclusion and remembers "on";
-/// turning OFF remembers "off" and — outside per-app mode, where memory is
-/// inert — also adds the hard exclusion.
+/// Set `app`'s Vietnamese state, using the same precedence the rest of the
+/// app does: turning ON lifts the hard exclusion and remembers "on"; turning
+/// OFF remembers "off" and adds the hard exclusion. The exclusion is written
+/// in both modes — it keeps the switch sticky-off either way, and
+/// `disabled_apps` preserves the display casing that `app_modes`' lowercased
+/// keys lose.
 fn set_app_on(s: &mut Settings, app: &str, on: bool) {
     if on {
         s.set_app_mode(app, true);
     } else {
         s.app_modes.insert(app.to_ascii_lowercase(), false);
-        if !s.per_app_mode && !s.disabled_for(Some(app)) {
+        if !s.disabled_for(Some(app)) {
             s.disabled_apps.push(app.to_string());
         }
     }

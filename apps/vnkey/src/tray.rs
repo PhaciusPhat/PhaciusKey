@@ -235,6 +235,12 @@ impl Tray {
             }
         }
 
+        // Keep the accelerator *hint* in sync with a shortcut edited in the
+        // settings window (the real shortcut lives in the keyboard hook).
+        let _ = self
+            .toggle
+            .set_accelerator(parse_shortcut(&settings.toggle_shortcut).and_then(accelerator_for));
+
         self.method_menu.set_text(method_title(settings));
         self.tone_menu.set_text(tone_title(settings));
         self.telex.set_checked(settings.method == Method::Telex);
