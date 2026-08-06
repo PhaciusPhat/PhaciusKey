@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  /* PhaciusKey settings — "lacquer night" glass theme, shared with the site. */
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --lacquer: #070b16;
+    --ink: #eaf0f9;
+    --mist: #9fabc3;
+    --faint: #77839d;
+    --jade: #38e1a9;
+    --jade-soft: rgba(56, 225, 169, 0.14);
+    --gilt: #f2c97d;
+    --glass: rgba(255, 255, 255, 0.05);
+    --glass-strong: rgba(255, 255, 255, 0.09);
+    --border: rgba(255, 255, 255, 0.12);
+    --border-soft: rgba(255, 255, 255, 0.07);
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--lacquer);
+    color: var(--mist);
+    font: 13.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    overflow-x: hidden;
+  }
+  ::selection { background: var(--jade); color: #06241a; }
+
+  .aurora {
+    position: fixed; inset: 0; z-index: -1; overflow: hidden;
+    background: radial-gradient(ellipse 90% 60% at 50% -10%, #101a35 0%, transparent 60%), var(--lacquer);
+  }
+  .aurora span { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .5; }
+  .a1 { width: 380px; height: 380px; left: -120px; top: -100px;
+        background: radial-gradient(circle, rgba(29,176,131,.5), transparent 65%);
+        animation: d1 26s ease-in-out infinite alternate; }
+  .a2 { width: 320px; height: 320px; right: -100px; top: 20%;
+        background: radial-gradient(circle, rgba(242,201,125,.3), transparent 65%);
+        animation: d2 32s ease-in-out infinite alternate; }
+  .a3 { width: 420px; height: 420px; left: 30%; bottom: -220px;
+        background: radial-gradient(circle, rgba(38,108,140,.45), transparent 65%);
+        animation: d3 38s ease-in-out infinite alternate; }
+  @keyframes d1 { to { transform: translate(70px, 60px) scale(1.1); } }
+  @keyframes d2 { to { transform: translate(-50px, 80px) scale(.92); } }
+  @keyframes d3 { to { transform: translate(-80px, -50px) scale(1.06); } }
+  @media (prefers-reduced-motion: reduce) { .aurora span { animation: none; } }
+
+  .wrap { max-width: 640px; margin: 0 auto; padding: 20px 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+
+  .glass {
+    background: var(--glass);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    backdrop-filter: blur(22px) saturate(1.4);
+    -webkit-backdrop-filter: blur(22px) saturate(1.4);
+    box-shadow: 0 18px 44px rgba(2,5,12,.45), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+
+  /* Header */
+  .top { display: flex; align-items: center; gap: 14px; padding: 16px 18px; }
+  .badge {
+    width: 42px; height: 42px; border-radius: 12px; flex: none;
+    display: grid; place-items: center;
+    background: linear-gradient(180deg, #131b2e, #0a0f1e);
+    border: 1px solid var(--border);
+    color: var(--jade); font-weight: 800; font-size: 20px;
+    text-shadow: 0 0 14px rgba(56,225,169,.8);
+  }
+  .top h1 { margin: 0; font-size: 16px; font-weight: 700; color: var(--ink); }
+  .top .ver { margin: 0; font-size: 11.5px; color: var(--faint); font-family: ui-monospace, "SF Mono", monospace; }
+  .top .spacer { flex: 1; }
+  .top .master { display: flex; align-items: center; gap: 10px; }
+  .top .master b { color: var(--ink); font-weight: 600; font-size: 13.5px; }
+
+  /* Sections */
+  section { padding: 6px 18px 10px; }
+  section h2 {
+    margin: 12px 0 4px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--jade);
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 11px 0; border-bottom: 1px solid var(--border-soft); min-height: 30px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row .lbl { flex: 1; min-width: 0; }
+  .row .lbl b { display: block; color: var(--ink); font-weight: 500; }
+  .row .lbl small { color: var(--faint); font-size: 11.5px; }
+
+  /* Toggle switch */
+  .sw { position: relative; width: 40px; height: 24px; flex: none; }
+  .sw input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .sw i {
+    position: absolute; inset: 0; border-radius: 999px;
+    background: rgba(255,255,255,.1); border: 1px solid var(--border);
+    transition: background .18s ease; pointer-events: none;
+  }
+  .sw i::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+    border-radius: 50%; background: #cfd8e6; transition: transform .18s ease, background .18s ease;
+  }
+  .sw input:checked + i { background: var(--jade); border-color: var(--jade); }
+  .sw input:checked + i::after { transform: translateX(16px); background: #06241a; }
+  .sw input:focus-visible + i { outline: 2px solid var(--jade); outline-offset: 2px; }
+
+  /* Segmented control */
+  .seg { display: flex; background: rgba(255,255,255,.06); border: 1px solid var(--border); border-radius: 9px; padding: 2px; flex: none; }
+  .seg button {
+    appearance: none; border: 0; background: transparent; color: var(--mist);
+    font: inherit; font-size: 12.5px; padding: 4px 14px; border-radius: 7px; cursor: pointer;
+  }
+  .seg button.on { background: var(--jade); color: #06241a; font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--jade); outline-offset: 1px; }
+
+  /* Text input */
+  input[type=text] {
+    background: rgba(255,255,255,.06); border: 1px solid var(--border); border-radius: 8px;
+    color: var(--ink); font: inherit; padding: 6px 10px; outline: none; min-width: 0;
+    font-family: ui-monospace, "SF Mono", monospace; font-size: 12.5px;
+  }
+  input[type=text]:focus { border-color: rgba(56,225,169,.5); }
+  input[type=text].bad { border-color: rgba(255,110,110,.6); }
+  #shortcut { width: 150px; text-align: center; }
+
+  button.btn {
+    appearance: none; font: inherit; font-size: 12.5px; cursor: pointer;
+    background: rgba(255,255,255,.07); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 13px;
+  }
+  button.btn:hover { background: rgba(255,255,255,.12); }
+  button.btn.danger { color: #ff9c9c; }
+  button.btn:focus-visible { outline: 2px solid var(--jade); outline-offset: 2px; }
+
+  /* Per-app list */
+  #apps { display: flex; flex-direction: column; }
+  #apps .row .lbl b { font-weight: 500; }
+  #apps .tag {
+    font-size: 10px; font-family: ui-monospace, "SF Mono", monospace;
+    color: var(--jade); background: var(--jade-soft);
+    border: 1px solid rgba(56,225,169,.25); border-radius: 5px;
+    padding: 1px 6px; margin-left: 8px; vertical-align: 1px;
+  }
+  #apps .rm {
+    appearance: none; border: 0; background: transparent; color: var(--faint);
+    font-size: 15px; cursor: pointer; padding: 2px 6px; border-radius: 6px; flex: none;
+  }
+  #apps .rm:hover { color: #ff9c9c; background: rgba(255,255,255,.06); }
+  .empty { color: var(--faint); font-size: 12.5px; padding: 10px 0; }
+  .addrow { display: flex; gap: 8px; padding: 11px 0; }
+  .addrow input { flex: 1; }
+
+  .foot { display: flex; gap: 8px; justify-content: flex-end; padding: 0 2px; }
+</style>
+</head>
+<body>
+  <div class="aurora"><span class="a1"></span><span class="a2"></span><span class="a3"></span></div>
+
+  <div class="wrap">
+    <header class="glass top">
+      <div class="badge">V</div>
+      <div>
+        <h1>PhaciusKey</h1>
+        <p class="ver" id="version"></p>
+      </div>
+      <div class="spacer"></div>
+      <div class="master">
+        <b>Vietnamese typing</b>
+        <label class="sw"><input type="checkbox" id="enabled"><i></i></label>
+      </div>
+    </header>
+
+    <section class="glass">
+      <h2>Typing</h2>
+      <div class="row">
+        <div class="lbl"><b>Input method</b><small>How diacritics are typed</small></div>
+        <div class="seg" id="method">
+          <button data-v="telex">Telex</button>
+          <button data-v="vni">VNI</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Tone placement</b><small>Modern “hòa” or classic “hoà”</small></div>
+        <div class="seg" id="placement">
+          <button data-v="modern">Modern</button>
+          <button data-v="classic">Classic</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Auto-restore English words</b><small>Typing “gôd” gives you back “good”</small></div>
+        <label class="sw"><input type="checkbox" id="auto_restore"><i></i></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Toggle shortcut</b><small>Flips Vietnamese typing anywhere, e.g. ctrl+shift+v</small></div>
+        <input type="text" id="shortcut" spellcheck="false" autocomplete="off">
+      </div>
+    </section>
+
+    <section class="glass">
+      <h2>Per-app</h2>
+      <div class="row">
+        <div class="lbl"><b>Remember on/off per app</b><small>Each app keeps its own Vietnamese state as you switch</small></div>
+        <label class="sw"><input type="checkbox" id="per_app_mode"><i></i></label>
+      </div>
+      <div id="apps"></div>
+      <div class="addrow">
+        <input type="text" id="addname" placeholder="App name, e.g. Terminal" spellcheck="false" autocomplete="off">
+        <button class="btn" id="addbtn">Turn off in app</button>
+      </div>
+    </section>
+
+    <section class="glass">
+      <h2>System</h2>
+      <div class="row">
+        <div class="lbl"><b>Start at login</b></div>
+        <label class="sw"><input type="checkbox" id="start_at_login"><i></i></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Install updates automatically</b></div>
+        <label class="sw"><input type="checkbox" id="auto_update"><i></i></label>
+      </div>
+    </section>
+
+    <div class="foot">
+      <button class="btn" id="open_config">Open config file…</button>
+      <button class="btn danger" id="forget">Forget all per-app settings</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+  var send = function (o) {
+    if (window.ipc) window.ipc.postMessage(JSON.stringify(o));
+  };
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---- Simple controls → commands ----
+  ["enabled", "auto_restore", "per_app_mode", "start_at_login", "auto_update"].forEach(function (key) {
+    $(key).addEventListener("change", function () {
+      send({ cmd: "set", key: key, value: this.checked });
+    });
+  });
+
+  ["method", "placement"].forEach(function (key) {
+    $(key).addEventListener("click", function (e) {
+      var v = e.target && e.target.dataset && e.target.dataset.v;
+      if (v) send({ cmd: "set", key: key, value: v });
+    });
+  });
+
+  var shortcut = $("shortcut");
+  var commitShortcut = function () {
+    send({ cmd: "set", key: "toggle_shortcut", value: shortcut.value.trim() });
+  };
+  shortcut.addEventListener("change", commitShortcut);
+  shortcut.addEventListener("keydown", function (e) { if (e.key === "Enter") this.blur(); });
+
+  var addname = $("addname");
+  var addApp = function () {
+    var name = addname.value.trim();
+    if (!name) return;
+    addname.value = "";
+    send({ cmd: "app", name: name, on: false });
+  };
+  $("addbtn").addEventListener("click", addApp);
+  addname.addEventListener("keydown", function (e) { if (e.key === "Enter") addApp(); });
+
+  $("open_config").addEventListener("click", function () { send({ cmd: "open_config" }); });
+  $("forget").addEventListener("click", function () { send({ cmd: "forget_apps" }); });
+
+  // ---- State → UI ----
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  window.__setState = function (s) {
+    $("version").textContent = "v" + s.version;
+    ["enabled", "auto_restore", "per_app_mode", "start_at_login", "auto_update"].forEach(function (key) {
+      $(key).checked = !!s[key];
+    });
+    ["method", "placement"].forEach(function (key) {
+      Array.prototype.forEach.call($(key).children, function (b) {
+        b.classList.toggle("on", b.dataset.v === s[key]);
+      });
+    });
+    if (document.activeElement !== shortcut) shortcut.value = s.toggle_shortcut;
+    shortcut.classList.toggle("bad", !s.shortcut_valid);
+
+    var box = $("apps");
+    if (!s.apps.length) {
+      box.innerHTML = '<div class="empty">No apps yet — switch to an app and it appears here, ' +
+                      'or add one below to turn Vietnamese off there.</div>';
+      return;
+    }
+    box.innerHTML = s.apps.map(function (a) {
+      var tag = a.name === s.current_app ? '<span class="tag">active</span>' : "";
+      return '<div class="row">' +
+        '<div class="lbl"><b>' + esc(a.name) + tag + "</b></div>" +
+        '<button class="rm" title="Forget this app" data-name="' + esc(a.name) + '">✕</button>' +
+        '<label class="sw"><input type="checkbox" data-name="' + esc(a.name) + '"' +
+        (a.on ? " checked" : "") + "><i></i></label>" +
+        "</div>";
+    }).join("");
+    Array.prototype.forEach.call(box.querySelectorAll("input[data-name]"), function (el) {
+      el.addEventListener("change", function () {
+        send({ cmd: "app", name: this.dataset.name, on: this.checked });
+      });
+    });
+    Array.prototype.forEach.call(box.querySelectorAll("button.rm"), function (el) {
+      el.addEventListener("click", function () {
+        send({ cmd: "app_remove", name: this.dataset.name });
+      });
+    });
+  };
+
+  send({ cmd: "init" });
+})();
+</script>
+</body>
+</html>

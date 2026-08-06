@@ -32,10 +32,7 @@ pub struct Tray {
     pub modern: CheckMenuItem,
     pub classic: CheckMenuItem,
     pub auto_restore: CheckMenuItem,
-    pub start_login: CheckMenuItem,
-    pub auto_update: CheckMenuItem,
-    pub open_config: MenuItem,
-    pub forget_apps: MenuItem,
+    pub settings: MenuItem,
     pub update: MenuItem,
     pub report: MenuItem,
     pub quit: MenuItem,
@@ -86,23 +83,9 @@ impl Tray {
         let auto_restore =
             CheckMenuItem::new("Auto-restore English words", true, settings.auto_restore, None);
 
-        // Housekeeping lives one level down, keeping the main menu about typing.
-        let start_login =
-            CheckMenuItem::new("Start at login", true, settings.start_at_login, None);
-        let auto_update =
-            CheckMenuItem::new("Install updates automatically", true, settings.auto_update, None);
-        let open_config = MenuItem::new("Open config file…", true, None);
-        let forget_apps = MenuItem::new("Forget all per-app settings", true, None);
-        let settings_menu = Submenu::new("Settings", true);
-        settings_menu
-            .append_items(&[
-                &start_login,
-                &auto_update,
-                &PredefinedMenuItem::separator(),
-                &open_config,
-                &forget_apps,
-            ])
-            .map_err(err)?;
+        // Everything else (login item, updates, per-app list, config file)
+        // lives in the settings window, keeping the menu about typing.
+        let settings_item = MenuItem::new("Settings…", true, None);
 
         // A glanceable cheat sheet beats sending people to the README mid-word.
         let report = MenuItem::new("Report an issue…", true, None);
@@ -134,7 +117,7 @@ impl Tray {
             &tone_menu,
             &auto_restore,
             &sep(),
-            &settings_menu,
+            &settings_item,
             &help_menu,
             &sep(),
             &update,
@@ -163,10 +146,7 @@ impl Tray {
             modern,
             classic,
             auto_restore,
-            start_login,
-            auto_update,
-            open_config,
-            forget_apps,
+            settings: settings_item,
             update,
             report,
             quit,
@@ -262,10 +242,6 @@ impl Tray {
         self.modern.set_checked(settings.placement == Placement::Modern);
         self.classic.set_checked(settings.placement == Placement::Classic);
         self.auto_restore.set_checked(settings.auto_restore);
-        self.start_login.set_checked(settings.start_at_login);
-        self.auto_update.set_checked(settings.auto_update);
-        self.forget_apps
-            .set_enabled(!settings.app_modes.is_empty() || !settings.disabled_apps.is_empty());
 
         // The glyph shows what a keystroke would do right now, so a per-app
         // off state turns it amber even while the master toggle is on.

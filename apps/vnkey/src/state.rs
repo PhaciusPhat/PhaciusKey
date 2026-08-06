@@ -17,6 +17,10 @@ struct Shell {
     settings: Settings,
     /// Name of the app currently receiving keystrokes (from the platform hook).
     current_app: Option<String>,
+    /// Every app that has received keystrokes this session, in the order first
+    /// seen. Feeds the settings window's per-app list, so apps show up there
+    /// as the user switches around — not persisted.
+    seen_apps: Vec<String>,
 }
 
 static SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
@@ -40,7 +44,12 @@ fn notify() {
 /// Initialize the global shell state. Call once at startup.
 pub fn init(settings: Settings) {
     let engine = Engine::new(settings.to_core(None));
-    let _ = SHELL.set(Mutex::new(Shell { engine, settings, current_app: None }));
+    let _ = SHELL.set(Mutex::new(Shell {
+        engine,
+        settings,
+        current_app: None,
+        seen_apps: Vec::new(),
+    }));
 }
 
 fn with<R>(f: impl FnOnce(&mut Shell) -> R) -> Option<R> {
@@ -122,6 +131,9 @@ pub fn set_current_app(name: &str) {
         if s.current_app.as_deref() == Some(name) {
             return false;
         }
+        if !s.seen_apps.iter().any(|a| a.eq_ignore_ascii_case(name)) {
+            s.seen_apps.push(name.to_string());
+        }
         s.current_app = Some(name.to_string());
         // The effective on/off state can differ per app, so the engine config
         // must follow the focus, not just the settings.
@@ -138,6 +150,11 @@ pub fn set_current_app(name: &str) {
 /// Name of the app currently receiving keystrokes, if known.
 pub fn current_app() -> Option<String> {
     with(|s| s.current_app.clone()).flatten()
+}
+
+/// Apps that have received keystrokes this session, in first-seen order.
+pub fn seen_apps() -> Vec<String> {
+    with(|s| s.seen_apps.clone()).unwrap_or_default()
 }
 
 /// Whether Vietnamese typing is effectively on right now (global switch,

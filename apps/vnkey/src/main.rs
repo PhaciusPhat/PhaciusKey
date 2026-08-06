@@ -36,6 +36,7 @@ mod config;
 mod installer;
 mod platform;
 mod png_write;
+mod settings_window;
 mod state;
 mod tray;
 mod update;
@@ -48,6 +49,7 @@ use tray_icon::menu::{MenuEvent, MenuId};
 
 use crate::config::Settings;
 use crate::platform::{Hook, KeyboardHook};
+use crate::settings_window::SettingsWindow;
 use crate::tray::Tray;
 
 /// Events posted to the main loop from background work.
@@ -63,6 +65,9 @@ enum UserEvent {
     /// Settings or the focused app changed off the main thread (toggle
     /// shortcut, app switch) — re-sync the tray.
     StateChanged,
+    /// A JSON command posted by the settings window's page (see
+    /// `settings_window::apply_ipc`).
+    Ipc(String),
 }
 
 fn main() {
@@ -116,8 +121,10 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
     let mut tray: Option<Tray> = None;
     let mut hook: Option<Hook> = None;
     let mut permission_requested = false;
+    // Created on the first "Settings…" click, then hidden/shown on demand.
+    let mut settings_win: Option<SettingsWindow> = None;
 
-    event_loop.run(move |event, _target, control_flow| {
+    event_loop.run(move |event, target, control_flow| {
         match event {
             Event::NewEvents(StartCause::Init) => {
                 let settings = state::settings();
@@ -127,6 +134,14 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 }
                 announce_completed_update();
                 spawn_update_check(proxy.clone());
+                // Dev smoke flag: open the settings window immediately, so the
+                // webview path can be exercised without clicking the tray.
+                if std::env::args().any(|a| a == "--settings-window") {
+                    match SettingsWindow::new(target, proxy.clone()) {
+                        Ok(win) => settings_win = Some(win),
+                        Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
+                    }
+                }
                 // Prompt for Accessibility once; the poll below installs the hook
                 // the moment it is granted — no relaunch needed.
                 platform::request_permission();
@@ -185,6 +200,32 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 if let Some(tray) = &tray {
                     tray.refresh(&state::settings(), state::current_app().as_deref());
                 }
+                // The settings window mirrors changes made anywhere else (the
+                // tray, the toggle shortcut, an app switch).
+                if let Some(win) = &settings_win {
+                    win.push_state();
+                }
+            }
+            Event::UserEvent(UserEvent::Ipc(msg)) => {
+                settings_window::apply_ipc(&msg);
+                if let Some(tray) = &tray {
+                    tray.refresh(&state::settings(), state::current_app().as_deref());
+                }
+                if let Some(win) = &settings_win {
+                    win.push_state();
+                }
+            }
+            Event::WindowEvent {
+                event: tao::event::WindowEvent::CloseRequested,
+                window_id,
+                ..
+            } => {
+                // The app lives in the menu bar; closing settings hides it.
+                if let Some(win) = &settings_win {
+                    if win.window_id() == window_id {
+                        win.hide();
+                    }
+                }
             }
             _ => {}
         }
@@ -203,7 +244,20 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
         // Drain menu clicks.
         while let Ok(menu_event) = menu_channel.try_recv() {
             if let Some(tray) = &tray {
+                if menu_event.id == tray.settings.id() {
+                    match &settings_win {
+                        Some(win) => win.show(),
+                        None => match SettingsWindow::new(target, proxy.clone()) {
+                            Ok(win) => settings_win = Some(win),
+                            Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
+                        },
+                    }
+                    continue;
+                }
                 handle_menu_event(tray, &proxy, &menu_event.id, control_flow);
+                if let Some(win) = &settings_win {
+                    win.push_state();
+                }
             }
         }
 
@@ -341,10 +395,6 @@ fn handle_menu_event(
         update::open_url(&update::new_issue_url());
         return;
     }
-    if id == tray.open_config.id() {
-        open_config_file();
-        return;
-    }
 
     let updated = if id == tray.toggle.id() {
         state::toggle_vietnamese()
@@ -364,13 +414,6 @@ fn handle_menu_event(
         })
     } else if id == tray.per_app.id() {
         state::update(|s| s.per_app_mode = !s.per_app_mode)
-    } else if id == tray.auto_update.id() {
-        state::update(|s| s.auto_update = !s.auto_update)
-    } else if id == tray.forget_apps.id() {
-        state::update(|s| {
-            s.app_modes.clear();
-            s.disabled_apps.clear();
-        })
     } else if id == tray.telex.id() {
         state::update(|s| s.method = Method::Telex)
     } else if id == tray.vni.id() {
@@ -381,10 +424,6 @@ fn handle_menu_event(
         state::update(|s| s.placement = Placement::Classic)
     } else if id == tray.auto_restore.id() {
         state::update(|s| s.auto_restore = !s.auto_restore)
-    } else if id == tray.start_login.id() {
-        let updated = state::update(|s| s.start_at_login = !s.start_at_login);
-        autostart::apply(updated.start_at_login);
-        updated
     } else {
         return;
     };
@@ -395,7 +434,7 @@ fn handle_menu_event(
 
 /// Open `config.toml` in the user's text editor, creating it first so the
 /// editor has something to open on a fresh install.
-fn open_config_file() {
+pub(crate) fn open_config_file() {
     let path = Settings::config_path();
     if !path.exists() {
         state::settings().save();

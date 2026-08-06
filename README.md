@@ -113,13 +113,17 @@ writes `dist/PhaciusKey-<version>.dmg`. To ship notarized, replace the
 | Switch input method | Click the VN icon → **Input method** → **Telex** / **VNI** |
 | Tone placement | Click the VN icon → **Tone placement** → **Modern** / **Classic** |
 | Auto-restore English | Click the VN icon → **Auto-restore English words** |
-| Start at login / auto-update / config file | Click the VN icon → **Settings** |
+| Settings window (per-app toggles, login item, updates, shortcut) | Click the VN icon → **Settings…** |
 | Telex & VNI cheat sheet | Click the VN icon → **Help** |
 | Quit | Click the VN icon → **Quit PhaciusKey** |
 
 The menu's second line always shows the focused app and whether a keystroke
-would type Vietnamese or English there right now; the glyph is green (**V**)
-when Vietnamese is active and pink (**E**) when it is not.
+would type Vietnamese or English there right now; the glyph is jade (**V**)
+when Vietnamese is active and amber (**E**) when it is not.
+
+**Settings…** opens a window (rendered with `wry`, in the same dark glass
+style as the website) with every option in one place — including a per-app
+list where each app you've typed in gets its own on/off switch.
 
 Settings persist to `~/Library/Application Support/vnkey/config.toml` on macOS
 (the OS config dir elsewhere).

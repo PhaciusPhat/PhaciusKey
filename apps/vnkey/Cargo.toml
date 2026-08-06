@@ -17,6 +17,7 @@ toml = "0.8"
 dirs = "5"
 tray-icon = "0.19"
 tao = "0.30"
+wry = "0.56.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
