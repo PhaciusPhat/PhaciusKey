@@ -37,6 +37,12 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    # Pages deployments can lag well past deploy-pages' 10-minute default
+    # when GitHub's Pages backend is degraded; give a slow deploy 30 minutes
+    # to land instead of aborting it.
+    timeout-minutes: 35
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          timeout: 1800000
