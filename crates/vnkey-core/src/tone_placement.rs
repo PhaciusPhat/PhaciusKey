@@ -158,6 +158,21 @@ fn is_base_vowel(c: char) -> bool {
     matches!(c, 'a' | 'ă' | 'â' | 'e' | 'ê' | 'i' | 'o' | 'ô' | 'ơ' | 'u' | 'ư' | 'y')
 }
 
+/// The tone a single (lowercase) vowel carries, `Flat` for unmarked characters.
+/// Inverse of [`toned_vowel`] — used to turn displayed text back into keys.
+pub fn char_tone(c: char) -> Tone {
+    let base = base_vowel(c).unwrap_or(c);
+    if base == c {
+        return Tone::Flat;
+    }
+    for tone in [Tone::Sharp, Tone::Grave, Tone::Hook, Tone::Tilde, Tone::Dot] {
+        if toned_vowel(base, tone) == c {
+            return tone;
+        }
+    }
+    Tone::Flat
+}
+
 /// Map a base vowel + tone to the precomposed Unicode character.
 pub fn toned_vowel(base: char, tone: Tone) -> char {
     let b = base_vowel(base).unwrap_or(base);

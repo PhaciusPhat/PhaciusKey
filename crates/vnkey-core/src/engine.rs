@@ -42,7 +42,16 @@ impl Engine {
         }
 
         self.buffer.push(ch);
-        self.recompute()
+        let actions = self.recompute();
+        if actions.is_empty() {
+            // The key was consumed but the screen already shows the result
+            // (e.g. a redundant horn key after "ưo" was auto-corrected to
+            // "ươ"). An empty list means "pass the key through", which would
+            // type the raw key on top of the word — return an explicit no-op
+            // so the shell still swallows the keystroke.
+            return vec![EditAction::Insert(String::new())];
+        }
+        actions
     }
 
     /// Handle a Backspace/Delete keystroke.
@@ -52,11 +61,13 @@ impl Engine {
     /// Backspace strip the tone mark rather than remove a letter: "đoán" became
     /// "đoan" (undoing the `s` of "ddoans") when the user expected "đoá".
     ///
-    /// Composing then stops for this word. The raw keystrokes no longer describe
+    /// Composing then **continues**. The typed keystrokes no longer describe
     /// what is on screen — deleting the 'n' of "đoán" would need raw "ddoas",
-    /// i.e. removing a key from the middle — and inventing a raw sequence for the
-    /// remaining text would corrupt the next keystroke. So the text stays on
-    /// screen as-is and the next key starts a fresh composition.
+    /// i.e. removing a key from the middle — so the raw buffer is re-derived
+    /// from the remaining text instead ("đoá" → "ddoas"). An earlier version
+    /// gave up and reset here, which meant keys typed after a delete composed
+    /// against nothing: re-completing "rượ" with a 'u' produced "rượu" typed
+    /// fresh as "rưoự" or plain "rưou" instead of "rượu".
     ///
     /// An empty vec means "we're not composing — let the native Backspace pass
     /// through untouched."
@@ -70,9 +81,10 @@ impl Engine {
         let target: String = chars.into_iter().collect();
 
         let actions = self.buffer.diff_to(&target);
-        // Forget the word: `reset` clears our record without emitting anything,
-        // so the remaining text stays on screen untouched.
-        self.buffer.reset();
+        self.buffer.raw = match self.config.method {
+            InputMethod::Telex => crate::methods::telex::encode_telex(&target),
+            InputMethod::Vni => crate::methods::vni::encode_vni(&target),
+        };
         self.passthrough = false;
         actions
     }
@@ -336,14 +348,27 @@ mod tests {
     }
 
     #[test]
-    fn typing_after_backspace_starts_a_fresh_composition() {
-        // Backspace ends the composition, so the next keys compose from scratch
-        // rather than resurrecting stale state.
+    fn typing_after_backspace_to_empty_starts_fresh() {
+        // Deleting the whole word leaves nothing to continue from, so the next
+        // keys compose from scratch.
         let mut e = engine();
         type_str(&mut e, "as");
         e.backspace();
         let actions = type_str(&mut e, "b");
         assert_eq!(actions, vec![EditAction::Insert("b".into())]);
         assert_eq!(e.buffer.raw, "b");
+    }
+
+    #[test]
+    fn typing_after_backspace_continues_the_composition() {
+        // Deleting into the middle of a word re-derives the raw keys from the
+        // remaining text, so the next keys keep composing: "đoá" + n → "đoán".
+        let mut e = engine();
+        type_str(&mut e, "ddoans");
+        e.backspace();
+        assert_eq!(e.buffer.displayed, "đoá");
+        assert_eq!(e.buffer.raw, "ddoas");
+        type_str(&mut e, "n");
+        assert_eq!(e.buffer.displayed, "đoán");
     }
 }

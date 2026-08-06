@@ -1,4 +1,5 @@
 use crate::types::Tone;
+use crate::validator::is_valid_prefix;
 use super::{InputMethodProcessor, MethodResult};
 
 pub struct TelexMethod;
@@ -79,10 +80,15 @@ impl TelexState {
             // Otherwise fall through and treat as a literal character.
         }
 
-        // A vowel arriving after a tone key cannot be Vietnamese: in Telex the
-        // tone comes after the rime. This is what marks "reset", "user" and
-        // "server" as foreign instead of composing "rết", "ủe", "sẻver".
-        if self.tone_applied && is_vowel(lower) {
+        // A vowel arriving after a tone key is *usually* not Vietnamese: in
+        // Telex the tone comes after the rime. This is what marks "reset",
+        // "user" and "server" as foreign instead of composing "rết", "ủe",
+        // "sẻver". But the closing vowels i/u/y/o legitimately extend the rime
+        // after an early tone key — "loaji" → "loại", "ddoori" → "đổi",
+        // "sasu" → "sáu" — so they keep composing and the validity check in the
+        // engine decides. Only a/e stay a foreign marker, which is what keeps
+        // "user" and "reset" as themselves.
+        if self.tone_applied && is_vowel(lower) && !matches!(lower, 'i' | 'u' | 'y' | 'o') {
             self.is_foreign = true;
         }
 
@@ -122,6 +128,27 @@ impl TelexState {
             }
         }
 
+        // --- Doubling vowel after the coda ---
+        // "viet" + 'e' is the user finishing the word before enriching it:
+        // the 'e' reaches back across the coda to the matching vowel, giving
+        // "viêt" ("vietej" → "việt"). Only fires when typing the key literally
+        // could no longer be Vietnamese and the enriched form still can, and
+        // only into a multi-vowel nucleus — the last guard is what keeps
+        // English "data"/"photo" (one vowel before the coda) restored verbatim
+        // instead of composing "dât"/"phôt".
+        if !self.is_foreign
+            && matches!(lower, 'a' | 'e' | 'o')
+            && self.syllable.chars().filter(|&c| is_vowel(c)).count() >= 2
+        {
+            if let Some(new_syl) = double_distant_vowel(&self.syllable, lower) {
+                let plain: String = format!("{}{}", self.syllable, lower);
+                if !is_valid_prefix(&plain) && is_valid_prefix(&new_syl) {
+                    self.syllable = new_syl;
+                    return;
+                }
+            }
+        }
+
         // --- Regular character ---
         self.syllable.push(lower);
     }
@@ -129,11 +156,90 @@ impl TelexState {
     fn finish(self) -> MethodResult {
         let literal = self.cancelled.then(|| self.syllable.clone());
         MethodResult {
-            bare: self.syllable,
+            // "ưo" never occurs in Vietnamese — the horn always spans the pair.
+            // Normalizing here is what lets "ruwou" (horn typed before the 'o')
+            // come out as "rươu" instead of going foreign.
+            bare: self.syllable.replace("ưo", "ươ"),
             tone: self.tone,
             is_foreign: self.is_foreign,
             literal,
         }
+    }
+}
+
+/// Reach back across the coda for the vowel `ch` doubles: "viet" + 'e' → "viêt".
+/// Returns `None` when the syllable has no plain occurrence of `ch` to enrich.
+fn double_distant_vowel(syllable: &str, ch: char) -> Option<String> {
+    let enriched = match ch {
+        'a' => 'â',
+        'e' => 'ê',
+        'o' => 'ô',
+        _ => return None,
+    };
+    let chars: Vec<char> = syllable.chars().collect();
+    let idx = chars.iter().rposition(|&c| c == ch)?;
+    let mut out: String = chars[..idx].iter().collect();
+    out.push(enriched);
+    out.extend(chars[idx + 1..].iter());
+    Some(out)
+}
+
+/// Turn displayed text back into the canonical Telex keys that produce it:
+/// "rượ" → "ruwowj". Used by Backspace so composing can continue after a
+/// character is deleted — the typed keys no longer describe the screen, but a
+/// re-derived sequence does.
+pub fn encode_telex(text: &str) -> String {
+    use crate::tone_placement::char_tone;
+    use crate::validator::base_vowel;
+
+    let mut out = String::new();
+    let mut tone = Tone::Flat;
+    for ch in text.chars() {
+        let upper = ch.is_uppercase();
+        let lower = ch.to_lowercase().next().unwrap_or(ch);
+        let t = char_tone(lower);
+        if t != Tone::Flat {
+            tone = t; // a syllable carries at most one tone; last one wins
+        }
+        let base = base_vowel(lower).unwrap_or(lower);
+        let keys: &str = match base {
+            'â' => "aa",
+            'ă' => "aw",
+            'ê' => "ee",
+            'ô' => "oo",
+            'ơ' => "ow",
+            'ư' => "uw",
+            'đ' => "dd",
+            _ => {
+                out.push(if upper { base.to_uppercase().next().unwrap_or(base) } else { base });
+                continue;
+            }
+        };
+        if upper {
+            out.push_str(&keys.to_uppercase());
+        } else {
+            out.push_str(keys);
+        }
+    }
+
+    if let Some(key) = tone_char(tone) {
+        // Match the case convention `apply_case` reads back: an all-caps word
+        // needs an all-caps raw ("VIỆT" → "VIEETJ"), otherwise lowercase.
+        let letters: Vec<char> = text.chars().filter(|c| c.is_alphabetic()).collect();
+        let all_caps = letters.len() > 1 && letters.iter().all(|c| c.is_uppercase());
+        out.push(if all_caps { key.to_ascii_uppercase() } else { key });
+    }
+    out
+}
+
+fn tone_char(tone: Tone) -> Option<char> {
+    match tone {
+        Tone::Sharp => Some('s'),
+        Tone::Grave => Some('f'),
+        Tone::Hook => Some('r'),
+        Tone::Tilde => Some('x'),
+        Tone::Dot => Some('j'),
+        Tone::Flat => None,
     }
 }
 

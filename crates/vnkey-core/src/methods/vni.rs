@@ -102,7 +102,61 @@ pub fn process_vni(raw: &str) -> MethodResult {
     }
 
     let literal = cancelled.then(|| syllable.clone());
-    MethodResult { bare: syllable, tone, is_foreign: false, literal }
+    MethodResult {
+        // "ưo" never occurs in Vietnamese — the horn always spans the pair, so
+        // "ru7ou" comes out as "rươu" (see the same rule in Telex).
+        bare: syllable.replace("ưo", "ươ"),
+        tone,
+        is_foreign: false,
+        literal,
+    }
+}
+
+/// Turn displayed text back into the canonical VNI keys that produce it:
+/// "rượ" → "ru7o75". Used by Backspace so composing can continue after a
+/// character is deleted.
+pub fn encode_vni(text: &str) -> String {
+    use crate::tone_placement::char_tone;
+    use crate::validator::base_vowel;
+
+    let mut out = String::new();
+    let mut tone = Tone::Flat;
+    for ch in text.chars() {
+        let upper = ch.is_uppercase();
+        let lower = ch.to_lowercase().next().unwrap_or(ch);
+        let t = char_tone(lower);
+        if t != Tone::Flat {
+            tone = t; // a syllable carries at most one tone; last one wins
+        }
+        let base = base_vowel(lower).unwrap_or(lower);
+        let (letter, digit) = match base {
+            'â' => ('a', Some('6')),
+            'ê' => ('e', Some('6')),
+            'ô' => ('o', Some('6')),
+            'ơ' => ('o', Some('7')),
+            'ư' => ('u', Some('7')),
+            'ă' => ('a', Some('8')),
+            'đ' => ('d', Some('9')),
+            other => (other, None),
+        };
+        out.push(if upper { letter.to_uppercase().next().unwrap_or(letter) } else { letter });
+        if let Some(d) = digit {
+            out.push(d);
+        }
+    }
+
+    let tone_digit = match tone {
+        Tone::Sharp => Some('1'),
+        Tone::Grave => Some('2'),
+        Tone::Hook => Some('3'),
+        Tone::Tilde => Some('4'),
+        Tone::Dot => Some('5'),
+        Tone::Flat => None,
+    };
+    if let Some(d) = tone_digit {
+        out.push(d);
+    }
+    out
 }
 
 /// If the last vowel carries one of `marked`, put it back to its base form.
