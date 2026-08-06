@@ -58,7 +58,9 @@ fn dot_tone() {
 
 #[test]
 fn flat_tone_z() {
-    assert_eq!(displayed_after("haz"), "ha");
+    // z removes a tone that exists; with no tone it is the letter z.
+    assert_eq!(displayed_after("hasz"), "ha");
+    assert_eq!(displayed_after("haz"), "haz");
 }
 
 // ── Vowel diacritic tests ─────────────────────────────────────────────────────

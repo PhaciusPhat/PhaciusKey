@@ -69,6 +69,18 @@ fn gi_and_qu_are_onsets_not_nuclei() {
 }
 
 #[test]
+fn g_plus_i_plus_coda_words_compose() {
+    // "gìn" (giữ gìn) is onset g + nucleus i + coda n. The greedy onset parser
+    // used to read "gi" as the onset, leaving the impossible rime "n", so the
+    // word went to passthrough and displayed raw "ginf".
+    assert_eq!(telex("ginf"), "gìn");
+    assert_eq!(vni("gin2"), "gìn");
+    // The "gi"-onset words must keep working alongside.
+    assert_eq!(telex("gias"), "giá");
+    assert_eq!(telex("giuwx"), "giữ");
+}
+
+#[test]
 fn modern_and_classic_placement_differ() {
     assert_eq!(telex("hoaf"), "hòa");
     assert_eq!(telex_classic("hoaf"), "hoà");
@@ -117,6 +129,20 @@ fn known_ambiguous_english_words_still_convert() {
     for (word, becomes) in [("rust", "rút"), ("cost", "cót"), ("last", "lát"), ("test", "tét")] {
         assert_eq!(telex(word), becomes, "{word:?} is ambiguous with Vietnamese");
     }
+}
+
+#[test]
+fn tone_removal_key_with_nothing_to_remove_is_literal() {
+    // 'z' removes a tone; with no tone to remove it is the letter z. It used to
+    // be consumed unconditionally, so "zoo" showed "ô" and "size" lost its 'z'.
+    for word in ["z", "zoo", "zalo", "size", "haz"] {
+        assert_eq!(telex(word), word, "expected {word:?} to survive untouched");
+    }
+    // ...but it still removes a real tone,
+    assert_eq!(telex("hasz"), "ha");
+    // and VNI's '0' behaves the same way.
+    assert_eq!(vni("ha0"), "ha0");
+    assert_eq!(vni("ha10"), "ha");
 }
 
 #[test]

@@ -12,12 +12,24 @@ pub fn is_valid_syllable(syllable: &str) -> bool {
     let bare = strip_tone_marks(syllable);
     let s = bare.to_lowercase();
 
-    // Try to split into (onset, nucleus, coda).
-    if let Some((onset, nucleus, coda)) = parse_syllable(&s) {
-        validate_combination(onset, nucleus, coda)
-    } else {
-        false
-    }
+    // Try every onset split, not just the greedy longest match: "gìn" is
+    // onset g + rime in, but "gi" is also an onset and would otherwise eat the
+    // vowel and leave the impossible rime "n". A split is good when its rime
+    // parses *and* the combination passes the compatibility rules.
+    let valid = onset_splits(&s).any(|(onset, rest)| match parse_rime(rest) {
+        Some((nucleus, coda)) => validate_combination(onset, nucleus, coda),
+        None => false,
+    });
+    valid
+}
+
+/// Every way to split `s` into a known onset + remainder, longest onset first,
+/// ending with the zero-onset split (the whole string as rime).
+fn onset_splits(s: &str) -> impl Iterator<Item = (&'static str, &str)> {
+    ONSETS
+        .iter()
+        .filter_map(move |&o| s.strip_prefix(o).map(|rest| (o, rest)))
+        .chain(std::iter::once(("", s)))
 }
 
 /// Returns true if `s` could still grow into a valid Vietnamese syllable — i.e.
@@ -43,16 +55,17 @@ pub fn is_valid_prefix(s: &str) -> bool {
         return true;
     }
 
-    let (onset, rest) = consume_onset(&s);
-    if onset.is_none() {
-        // Zero onset is legal only when the syllable opens with a vowel. This is
-        // what rejects "jira", "student" ("st"), "first" ("f") and friends.
-        match s.chars().next() {
-            Some(c) if is_vowel_char(c) => {}
-            _ => return false,
+    // Any onset split whose rime is still growable will do — greedy-only
+    // matching wrongly rejected "gin" (gìn) because "gi" left the rime "n".
+    // The zero-onset split is legal only when the syllable opens with a vowel,
+    // which is what rejects "jira", "student" ("st"), "first" ("f") and friends.
+    let valid = onset_splits(&s).any(|(onset, rest)| {
+        if onset.is_empty() && !s.chars().next().is_some_and(is_vowel_char) {
+            return false;
         }
-    }
-    is_valid_rime_prefix(rest)
+        is_valid_rime_prefix(rest)
+    });
+    valid
 }
 
 /// Up to three vowels, then at most one (possibly partial) coda cluster.
@@ -140,16 +153,19 @@ const ONSETS: &[&str] = &[
     "m", "n", "p", "r", "s", "t", "v", "x",
 ];
 
-/// Try to consume the onset from the front of `s`.
-/// Returns (Some(onset_str), remainder) or (None, s) for zero onset.
-fn consume_onset(s: &str) -> (Option<&'static str>, &str) {
-    for &onset in ONSETS {
-        if let Some(rest) = s.strip_prefix(onset) {
-            // Make sure what follows isn't another consonant that would be part of onset.
-            return (Some(onset), rest);
+/// Parse a rime into (nucleus, coda). The coda is optional but nothing may
+/// remain after it.
+fn parse_rime(s: &str) -> Option<(&'static str, &'static str)> {
+    let (nucleus, after_nucleus) = consume_nucleus(s)?;
+    let coda = if after_nucleus.is_empty() {
+        ""
+    } else {
+        match consume_coda(after_nucleus) {
+            Some((c, "")) => c,
+            _ => return None, // leftover characters — invalid
         }
-    }
-    (None, s)
+    };
+    Some((nucleus, coda))
 }
 
 // ── Nucleus / coda parsing ──────────────────────────────────────────────────
@@ -191,25 +207,6 @@ fn consume_coda(s: &str) -> Option<(&'static str, &str)> {
         }
     }
     None
-}
-
-fn parse_syllable(s: &str) -> Option<(&'static str, &'static str, &'static str)> {
-    let (onset, after_onset) = consume_onset(s);
-    let onset = onset.unwrap_or("");
-
-    let (nucleus, after_nucleus) = consume_nucleus(after_onset)?;
-
-    // Coda is optional.
-    let coda = if after_nucleus.is_empty() {
-        ""
-    } else {
-        match consume_coda(after_nucleus) {
-            Some((c, "")) => c,
-            _ => return None, // leftover characters — invalid
-        }
-    };
-
-    Some((onset, nucleus, coda))
 }
 
 // ── Compatibility rules ─────────────────────────────────────────────────────

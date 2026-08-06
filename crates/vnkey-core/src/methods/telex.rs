@@ -53,9 +53,16 @@ impl TelexState {
 
         // --- Tone key? ---
         if let Some(tone) = tone_key(lower) {
-            // Tone keys are applied if the syllable has at least one vowel.
-            // 'z' explicitly resets tone to Flat.
-            if has_vowel(&self.syllable) || tone == Tone::Flat {
+            // A tone key needs a vowel to carry the mark, and 'z' (remove tone)
+            // additionally needs a tone to remove — with nothing to undo it is
+            // the letter z. It used to be consumed unconditionally, so a
+            // leading 'z' vanished ("zoo" showed "ô") and "size" lost its z.
+            let acts = if tone == Tone::Flat {
+                self.tone != Tone::Flat
+            } else {
+                has_vowel(&self.syllable)
+            };
+            if acts {
                 if self.tone == tone && tone != Tone::Flat {
                     // Same tone key twice cancels it and types the letter, so
                     // "ass" is "as" rather than "á" with the second 's' eaten.
@@ -250,7 +257,9 @@ mod tests {
         assert_eq!(telex("har"), ("ha".into(), Tone::Hook));
         assert_eq!(telex("hax"), ("ha".into(), Tone::Tilde));
         assert_eq!(telex("haj"), ("ha".into(), Tone::Dot));
-        assert_eq!(telex("haz"), ("ha".into(), Tone::Flat));
+        // z removes an existing tone; with no tone it is the letter z.
+        assert_eq!(telex("hasz"), ("ha".into(), Tone::Flat));
+        assert_eq!(telex("haz"), ("haz".into(), Tone::Flat));
     }
 
     #[test]

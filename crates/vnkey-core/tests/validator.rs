@@ -10,6 +10,7 @@ const VALID: &[&str] = &[
     "bàn", "con", "đen", "giờ", "học", "lớp",
     "mình", "nhà", "ông", "phố", "quán", "rừng",
     "sông", "tôi", "vui", "xanh",
+    "gìn", "gin", // onset g + nucleus i + coda: greedy "gi" onset must backtrack
 ];
 
 const INVALID: &[&str] = &[

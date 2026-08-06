@@ -39,7 +39,15 @@ pub fn process_vni(raw: &str) -> MethodResult {
         };
 
         if let Some(new_tone) = tone_digit {
-            if !has_vowel(&syllable) {
+            // A tone digit needs a vowel to carry the mark, and '0' (remove
+            // tone) additionally needs a tone to remove — with nothing to undo
+            // it is the digit 0, mirroring Telex's 'z'.
+            let acts = if new_tone == Tone::Flat {
+                tone != Tone::Flat
+            } else {
+                has_vowel(&syllable)
+            };
+            if !acts {
                 syllable.push(ch);
             } else if tone == new_tone && new_tone != Tone::Flat {
                 // Same digit twice: undo the tone and type the digit.
@@ -218,7 +226,9 @@ mod tests {
         assert_eq!(vni("ha3"), ("ha".into(), Tone::Hook));
         assert_eq!(vni("ha4"), ("ha".into(), Tone::Tilde));
         assert_eq!(vni("ha5"), ("ha".into(), Tone::Dot));
-        assert_eq!(vni("ha0"), ("ha".into(), Tone::Flat));
+        // 0 removes an existing tone; with no tone it is the digit 0.
+        assert_eq!(vni("ha10"), ("ha".into(), Tone::Flat));
+        assert_eq!(vni("ha0"), ("ha0".into(), Tone::Flat));
     }
 
     #[test]
