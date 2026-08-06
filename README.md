@@ -159,6 +159,9 @@ Set `auto_update = false` in `config.toml` to be notified only.
 cargo test --all                              # engine + shell tests
 cargo clippy --all-targets -- -D warnings     # lint
 cargo run -p vnkey                            # run the macOS app
+cargo run -p vnkey-core --example repl        # type through the engine in a
+                                              # terminal — no Accessibility
+                                              # permission needed
 ```
 
 CI runs `cargo test`, `cargo clippy`, and a Windows `cargo build` on every push
