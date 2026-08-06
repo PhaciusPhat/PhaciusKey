@@ -14,3 +14,6 @@ Cargo.lock
 
 # Upstream clones kept locally for reference only
 /reference/
+
+# Local release-signing material (cert, p12, keychain) — NEVER commit
+.signing/

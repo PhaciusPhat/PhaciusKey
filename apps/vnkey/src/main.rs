@@ -10,18 +10,23 @@
 //! quit/relaunch after the user grants it, the loop **polls once a second and
 //! installs the hook the moment permission appears**.
 //!
-//! An update check runs in the background. When a newer release exists and
-//! `auto_update` is on (the default), the app downloads it, replaces its own
+//! An update check runs in the background — once at launch, then daily for as
+//! long as the process lives (a menu-bar agent is rarely quit, so a launch-only
+//! check would fire once per login, not once a day). A *failed* check retries
+//! after 15 minutes instead of sitting out the rest of the day: the launch check
+//! races Wi-Fi/VPN coming up at login, and long sessions hit transient failures
+//! (network flaps, GitHub's per-IP rate limit) too. When a newer release exists
+//! and `auto_update` is on (the default), the app downloads it, replaces its own
 //! bundle, relaunches, and tells the user on the way back up — see `installer`.
 //! Outside a `.app` (a `cargo run` build) it only surfaces the menu item.
 //!
-//! One caveat is unavoidable today: macOS ties the Accessibility grant to the
-//! code signature, and `package-app.sh` ad-hoc signs, so each build has a
-//! different identity and the grant does **not** survive the swap. The update
-//! still installs silently; the dialog afterwards says Accessibility must be
-//! allowed again. A Developer ID signature is what makes it fully seamless, and
-//! needs no change to this code — `installer::install` reports the live TCC
-//! state rather than assuming it.
+//! macOS ties the Accessibility grant to the code-signing identity. Published
+//! releases are all signed with the shared `phaciuskey-release` certificate
+//! (see CONTRIBUTING.md → Releasing), so the grant survives the swap. Ad-hoc
+//! dev builds each carry a fresh identity — after updating one of those, the
+//! relaunch dialog says Accessibility must be allowed again.
+//! `installer::install` reports the live TCC state rather than assuming either
+//! way.
 
 // No console window on Windows release builds.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
@@ -162,17 +167,47 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
     })
 }
 
+/// Check now, then once a day for the life of the process; a failed check is
+/// retried after 15 minutes (see the module docs for why both matter).
 fn spawn_update_check(proxy: EventLoopProxy<UserEvent>) {
-    std::thread::spawn(move || {
-        if let Some(version) = update::check_for_newer() {
-            let _ = proxy.send_event(UserEvent::UpdateAvailable(version));
-        }
+    const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+    const RETRY: Duration = Duration::from_secs(15 * 60);
+    std::thread::spawn(move || loop {
+        let wait = match update::check_for_newer() {
+            Ok(Some(version)) => {
+                let _ = proxy.send_event(UserEvent::UpdateAvailable(version));
+                DAY
+            }
+            Ok(None) => DAY,
+            Err(e) => {
+                eprintln!("[vnkey] update check failed (retrying in 15 min): {e}");
+                RETRY
+            }
+        };
+        std::thread::sleep(wait);
     });
 }
 
 /// Install `version` in the background, then ask the loop to relaunch.
+///
+/// The daily check re-announces an update whose install failed the day before;
+/// the guard makes a second announcement arriving while an install is still in
+/// flight a no-op rather than a concurrent download of the same DMG.
 fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static INSTALLING: AtomicBool = AtomicBool::new(false);
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return;
+    }
     std::thread::spawn(move || {
+        // Re-arm on every exit path; on success the process relaunches anyway.
+        struct Rearm;
+        impl Drop for Rearm {
+            fn drop(&mut self) {
+                INSTALLING.store(false, Ordering::SeqCst);
+            }
+        }
+        let _rearm = Rearm;
         eprintln!("[vnkey] installing update {version}…");
         match installer::install(&version) {
             Ok(outcome) => {

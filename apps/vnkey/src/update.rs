@@ -1,9 +1,10 @@
 //! Lightweight update check and outbound links.
 //!
 //! We shell out to `curl` (present on macOS and modern Windows) so the app pulls
-//! in no TLS/networking crates. The check only *notifies*; it never replaces the
-//! app in place — see the note in `main` about why silent self-update needs a
-//! stable Developer ID signature to avoid re-granting Accessibility.
+//! in no TLS/networking crates. When a newer release is found, `main` hands it to
+//! `installer` to download and swap in place. Whether the Accessibility grant
+//! survives that swap is a *signing* property, not an updater one: releases must
+//! share the `phaciuskey-release` identity (see CONTRIBUTING.md → Releasing).
 
 /// This build's version, from Cargo.
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
@@ -33,13 +34,15 @@ pub fn new_issue_url() -> String {
     )
 }
 
-/// Query GitHub for the newest release tag. Returns the version (no leading `v`)
-/// if it is newer than this build, else `None`. Blocking; run off the main
-/// thread.
+/// Query GitHub for the newest release tag. `Ok(Some(version))` (no leading `v`)
+/// when a release newer than this build exists, `Ok(None)` when up to date, and
+/// `Err` when the check itself failed — the caller retries failures much sooner
+/// than the daily cadence, because the launch check routinely races Wi-Fi/VPN
+/// coming up at login. Blocking; run off the main thread.
 ///
 /// Uses the releases *list* rather than `/releases/latest`, because our releases
 /// are marked pre-release and `/releases/latest` only returns full releases.
-pub fn check_for_newer() -> Option<String> {
+pub fn check_for_newer() -> Result<Option<String>, String> {
     let output = std::process::Command::new("curl")
         .args([
             "-sL",
@@ -52,26 +55,26 @@ pub fn check_for_newer() -> Option<String> {
             &format!("https://api.github.com/repos/{REPO}/releases?per_page=10"),
         ])
         .output()
-        .ok()?;
+        .map_err(|e| format!("curl: {e}"))?;
     if !output.status.success() {
-        return None;
+        return Err(format!("curl exited with {}", output.status));
     }
-    let releases: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let releases: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("unexpected response from GitHub: {e}"))?;
 
-    // Highest version across all (non-draft) releases.
+    // Highest version across all (non-draft) releases. An empty or non-array
+    // body (e.g. a rate-limit error object) counts as a failed check, not as
+    // "up to date".
     let newest = releases
-        .as_array()?
+        .as_array()
+        .ok_or("unexpected response from GitHub: not a release list")?
         .iter()
         .filter(|r| !r.get("draft").and_then(|d| d.as_bool()).unwrap_or(false))
         .filter_map(|r| r.get("tag_name")?.as_str())
         .map(|tag| tag.trim_start_matches('v').to_string())
-        .max_by_key(|v| parse(v))?;
+        .max_by_key(|v| parse(v));
 
-    if is_newer(&newest, CURRENT) {
-        Some(newest)
-    } else {
-        None
-    }
+    Ok(newest.filter(|v| is_newer(v, CURRENT)))
 }
 
 /// Open a URL in the user's default browser.

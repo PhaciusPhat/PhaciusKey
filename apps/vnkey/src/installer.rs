@@ -4,12 +4,12 @@
 //!
 //! macOS binds the Accessibility (TCC) grant to the app's **code signature**.
 //! Replacing the bundle keeps the grant only if the new bundle carries the *same*
-//! stable signing identity. `scripts/package-app.sh` ad-hoc signs
-//! (`codesign --sign -`), which mints a fresh ad-hoc identity per build — so
-//! after an update macOS treats the app as a different program and asks for
-//! Accessibility again. That is a property of the signing setup, not of this
-//! code: with a Developer ID certificate plus notarization, this same flow
-//! becomes genuinely permission-preserving with no changes here.
+//! stable signing identity. Published releases are all signed with the shared
+//! `phaciuskey-release` certificate (see CONTRIBUTING.md → Releasing), so the
+//! grant survives updates between them. An ad-hoc build
+//! (`PHACIUSKEY_ALLOW_ADHOC=1`, or `codesign --sign -`) mints a fresh identity
+//! per build — after updating one of those, macOS treats the app as a different
+//! program and asks for Accessibility again.
 //!
 //! [`install`] therefore reports whether the grant survived, and the app tells
 //! the user the truth either way rather than silently stopping working.
@@ -208,11 +208,12 @@ pub fn announce_update(from: &str, to: &str, needs_permission: bool) {
         "PhaciusKey has been updated from {from} to {to} and restarted automatically."
     );
     if needs_permission {
-        // Be explicit: with ad-hoc signing the grant cannot survive, and silently
-        // dead Vietnamese typing is far worse than saying so.
+        // Be explicit: when the signing identity changed across the swap the
+        // grant cannot survive, and silently dead Vietnamese typing is far
+        // worse than saying so.
         body.push_str(
-            "\n\nmacOS needs you to allow Accessibility once more, because each build \
-             is signed with a different ad-hoc identity. Open System Settings → \
+            "\n\nmacOS needs you to allow Accessibility once more, because this \
+             update changed the app's code-signing identity. Open System Settings → \
              Privacy & Security → Accessibility and enable PhaciusKey — typing stays \
              off until then.",
         );

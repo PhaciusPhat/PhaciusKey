@@ -3,6 +3,15 @@ name: Release
 # Publishing a release is a manual, deliberate step: push a version tag
 # (e.g. `git tag v0.0.2 && git push origin v0.0.2`) and this workflow builds the
 # signed .dmg on a macOS runner and creates the GitHub release with it attached.
+#
+# The DMG is signed with the shared "phaciuskey-release" identity, imported from
+# two repository secrets so a release can be cut just by pushing a tag — the
+# signing key never needs to live on a developer Mac:
+#   • RELEASE_CERT_P12_BASE64 — the phaciuskey-release cert exported as a .p12,
+#                               base64-encoded (base64 -i phaciuskey-release.p12 | pbcopy)
+#   • RELEASE_CERT_PASSWORD   — the password set when exporting that .p12
+# See CONTRIBUTING.md > Releasing for the one-time cert setup. A stable signing
+# identity is what lets users keep their Accessibility grant across auto-updates.
 on:
   push:
     tags: ["v*"]
@@ -42,8 +51,54 @@ jobs:
             exit 1
           fi
 
+      - name: Refuse to release without the signing secret
+        env:
+          RELEASE_CERT_P12_BASE64: ${{ secrets.RELEASE_CERT_P12_BASE64 }}
+        run: |
+          if [ -z "$RELEASE_CERT_P12_BASE64" ]; then
+            echo "::error::RELEASE_CERT_P12_BASE64 is not set — refusing to ship an ad-hoc-signed release (it would reset every user's Accessibility grant). Add the secret (see CONTRIBUTING.md > Releasing) and re-run."
+            exit 1
+          fi
+
+      - name: Import the phaciuskey-release signing certificate
+        env:
+          RELEASE_CERT_P12_BASE64: ${{ secrets.RELEASE_CERT_P12_BASE64 }}
+          RELEASE_CERT_PASSWORD: ${{ secrets.RELEASE_CERT_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/phaciuskey-release.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -base64 24)"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"   # for the cleanup step
+
+          echo -n "$RELEASE_CERT_P12_BASE64" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$RELEASE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          # Let codesign use the private key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASS" "$KEYCHAIN_PATH" >/dev/null
+          # Make the keychain visible to `security find-identity` / codesign.
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm -f "$CERT_PATH"
+
+          # Fail loudly if the expected identity isn't present — otherwise the
+          # packaging script would abort later with a less specific message.
+          if ! security find-identity -p codesigning | grep -q "phaciuskey-release"; then
+            echo "::error::'phaciuskey-release' identity not found after import. Check the cert name (must be 'phaciuskey-release') and the password."
+            security find-identity -p codesigning || true
+            exit 1
+          fi
+
       - name: Build .dmg
         run: bash scripts/package-app.sh
+
+      - name: Clean up the signing keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          fi
 
       - name: Create GitHub release
         env:
