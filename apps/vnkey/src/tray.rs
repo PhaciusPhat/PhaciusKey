@@ -268,7 +268,7 @@ impl Tray {
             .set_enabled(!settings.app_modes.is_empty() || !settings.disabled_apps.is_empty());
 
         // The glyph shows what a keystroke would do right now, so a per-app
-        // off state turns it pink even while the master toggle is on.
+        // off state turns it amber even while the master toggle is on.
         let _ = self.tray.set_icon(Some(status_icon(effective)));
     }
 }
@@ -328,10 +328,10 @@ fn accelerator_for(sc: Shortcut) -> Option<Accelerator> {
 
 // ── Icon rendering ─────────────────────────────────────────────────────────────
 
-/// Render the menu-bar glyph: a single neon letter on a dark rounded badge —
-/// **V** (neon green) when Vietnamese typing is on, **E** (neon pink) when off.
-/// Each letter glows. Drawn at 4× and box-downsampled for crisp, anti-aliased
-/// edges.
+/// Render the menu-bar glyph: a single glowing letter on a dark glass badge —
+/// **V** (jade) when Vietnamese typing is on, **E** (gilt amber) when off.
+/// Matches the website's "lacquer night" glass theme: lacquer base, top sheen,
+/// light rim. Drawn at 4× and box-downsampled for crisp, anti-aliased edges.
 fn status_icon(enabled: bool) -> Icon {
     let rgba = render_rgba(36, enabled);
     Icon::from_rgba(rgba, 36, 36).expect("valid rgba icon")
@@ -346,13 +346,14 @@ pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
     let big = size * SS;
     let n = big * big;
 
-    // Neon palette: bright tube color + a hot near-white core.
+    // Glass palette (shared with the website): glowing tube color + a hot
+    // near-white core, on a deep blue-black lacquer badge.
     let (neon, core): (Rgb, Rgb) = if enabled {
-        ((57.0, 255.0, 20.0), (214.0, 255.0, 208.0)) // green — Vietnamese
+        ((56.0, 225.0, 169.0), (216.0, 255.0, 240.0)) // jade — Vietnamese
     } else {
-        ((255.0, 42.0, 130.0), (255.0, 210.0, 228.0)) // pink — English
+        ((242.0, 201.0, 125.0), (255.0, 240.0, 214.0)) // gilt amber — English
     };
-    let badge: Rgb = (12.0, 12.0, 20.0); // near-black, so neon reads as neon
+    let badge: Rgb = (7.0, 11.0, 22.0); // lacquer night, so the glow reads as glow
 
     let big_f = big as f32;
     let inset = big_f * 0.055;
@@ -391,16 +392,28 @@ pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
     // Glow = blurred letter coverage.
     let glow = box_blur(&cov, big, (big_f * 0.05) as usize, 3);
 
-    // Compose: badge, then additive neon glow, then the bright letter core.
+    // Compose: badge with a glassy top sheen and light rim, then additive
+    // glow, then the bright letter core.
+    let rim = big_f * 0.028; // light inner border — the "edge" of the glass
     let mut hi = vec![0u8; n * 4];
     for i in 0..n {
         if mask[i] <= 0.0 {
             continue; // transparent outside the badge
         }
+        let (px, py) = ((i % big) as f32 + 0.5, (i / big) as f32 + 0.5);
+        // Sheen: light catching the top of the pane, fading out by mid-badge.
+        let sheen = 30.0 * (1.0 - py / (big_f * 0.55)).max(0.0);
+        // Rim: pixels between the badge edge and an inset rounded rect.
+        let on_rim = !inside_rounded(
+            px, py,
+            x0 + rim, y0 + rim, x1 - rim, y1 - rim,
+            (radius - rim).max(0.0),
+        );
+        let edge = if on_rim { 46.0 } else { 0.0 };
         let g = (glow[i] * 2.2).min(1.0);
-        let mut r = badge.0 + neon.0 * g;
-        let mut gg = badge.1 + neon.1 * g;
-        let mut b = badge.2 + neon.2 * g;
+        let mut r = badge.0 + sheen + edge + neon.0 * g;
+        let mut gg = badge.1 + sheen + edge + neon.1 * g;
+        let mut b = badge.2 + sheen + edge + neon.2 * g;
         if cov[i] > 0.0 {
             r = core.0;
             gg = core.1;
@@ -458,7 +471,7 @@ const ICONSET_SIZES: &[(&str, u32)] = &[
     ("icon_512x512@2x.png", 1024),
 ];
 
-/// Render the app icon (the "enabled" neon-green glyph, since the Finder/Dock
+/// Render the app icon (the "enabled" jade glyph, since the Finder/Dock
 /// icon has no on/off state) at every size macOS's `.iconset` format expects,
 /// writing PNGs into `dir`. Only used by `scripts/package-app.sh` via the
 /// hidden `--export-iconset` flag — never invoked during normal app use.

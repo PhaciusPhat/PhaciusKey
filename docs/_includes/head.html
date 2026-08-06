@@ -1,13 +1,16 @@
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta property="og:image" content="{{ '/PhaciusKeyLogo_240.PNG' | absolute_url }}" />
   <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#070b16">
 
-  <title>PhaciusKey - Vietnamese Keyboard - Bộ gõ tiếng Việt cho macOS</title>
-  <meta name="description" content="PhaciusKey - bộ gõ tiếng Việt miễn phí, mã nguồn mở, viết hoàn toàn bằng Rust. Hỗ trợ Telex và VNI trên macOS.">
+  <title>{% if page.title %}{{ page.title }}{% else %}PhaciusKey — Bộ gõ tiếng Việt cho macOS{% endif %}</title>
+  <meta name="description" content="PhaciusKey — bộ gõ tiếng Việt miễn phí, mã nguồn mở, viết hoàn toàn bằng Rust. Hỗ trợ Telex và VNI trên macOS.">
 
-  <link rel="stylesheet" href="{{ '/assets/css/main.css' | prepend: site.baseurl }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="{{ '/assets/css/glass.css' | prepend: site.baseurl }}">
   <link rel="shortcut icon" type="image/png" href="{{ '/assets/favicon.png' | relative_url }}">
 </head>
