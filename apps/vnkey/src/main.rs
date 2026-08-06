@@ -341,18 +341,35 @@ fn handle_menu_event(
         update::open_url(&update::new_issue_url());
         return;
     }
+    if id == tray.open_config.id() {
+        open_config_file();
+        return;
+    }
 
     let updated = if id == tray.toggle.id() {
-        state::update(|s| s.enabled = !s.enabled)
+        state::toggle_vietnamese()
     } else if id == tray.app_toggle.id() {
-        // Flip the focused app in/out of the disabled list.
+        // Flip the focused app: its remembered state in per-app mode, its
+        // presence in the exclusion list otherwise.
         let Some(app) = state::current_app() else { return };
         state::update(|s| {
-            if s.disabled_for(Some(&app)) {
+            if s.per_app_mode {
+                let now = s.vietnamese_on(Some(&app));
+                s.set_app_mode(&app, !now);
+            } else if s.disabled_for(Some(&app)) {
                 s.disabled_apps.retain(|d| !d.eq_ignore_ascii_case(&app));
             } else {
                 s.disabled_apps.push(app.clone());
             }
+        })
+    } else if id == tray.per_app.id() {
+        state::update(|s| s.per_app_mode = !s.per_app_mode)
+    } else if id == tray.auto_update.id() {
+        state::update(|s| s.auto_update = !s.auto_update)
+    } else if id == tray.forget_apps.id() {
+        state::update(|s| {
+            s.app_modes.clear();
+            s.disabled_apps.clear();
         })
     } else if id == tray.telex.id() {
         state::update(|s| s.method = Method::Telex)
@@ -374,4 +391,17 @@ fn handle_menu_event(
 
     // Reflect the change back into the menu checkmarks and tray glyph.
     tray.refresh(&updated, state::current_app().as_deref());
+}
+
+/// Open `config.toml` in the user's text editor, creating it first so the
+/// editor has something to open on a fresh install.
+fn open_config_file() {
+    let path = Settings::config_path();
+    if !path.exists() {
+        state::settings().save();
+    }
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg("-t").arg(&path).spawn();
+    #[cfg(not(target_os = "macos"))]
+    update::open_url(&path.to_string_lossy());
 }

@@ -8,6 +8,8 @@ engine driving thin per-OS keyboard hooks.
 - Smart spell-check — only applies diacritics when the result is a valid Vietnamese syllable
 - Auto-restores raw keystrokes for English and other non-Vietnamese words
 - Modern and Classic tone placement (`hòa` vs `hoà`)
+- Per-app on/off memory (EVKey-style): the toggle can remember Vietnamese
+  on/off separately for every app and restore it as you switch focus
 - Menu-bar / system-tray control (toggle, method, tone placement, auto-restore)
 - Cross-platform by design: **macOS today**, **Windows** scaffold in progress
 
@@ -105,11 +107,19 @@ writes `dist/PhaciusKey-<version>.dmg`. To ship notarized, replace the
 
 | Action | How |
 |--------|-----|
-| Toggle Vietnamese on/off | Click the VN icon → **Vietnamese typing** |
-| Switch input method | Click the VN icon → **Telex** / **VNI** |
-| Tone placement | Click the VN icon → **Modern** / **Classic** |
-| Auto-restore English | Click the VN icon → **Auto-restore English** |
+| Toggle Vietnamese on/off | **⌃⇧V** (configurable), or click the VN icon → **Vietnamese typing** |
+| Turn off in one app only | Click the VN icon → **Enable in \<app\>** |
+| Remember on/off per app | Click the VN icon → **Remember on/off per app** — the toggle then applies to the focused app only, and each app's last state is restored when you switch back (EVKey-style) |
+| Switch input method | Click the VN icon → **Input method** → **Telex** / **VNI** |
+| Tone placement | Click the VN icon → **Tone placement** → **Modern** / **Classic** |
+| Auto-restore English | Click the VN icon → **Auto-restore English words** |
+| Start at login / auto-update / config file | Click the VN icon → **Settings** |
+| Telex & VNI cheat sheet | Click the VN icon → **Help** |
 | Quit | Click the VN icon → **Quit PhaciusKey** |
+
+The menu's second line always shows the focused app and whether a keystroke
+would type Vietnamese or English there right now; the glyph is green (**V**)
+when Vietnamese is active and pink (**E**) when it is not.
 
 Settings persist to `~/Library/Application Support/vnkey/config.toml` on macOS
 (the OS config dir elsewhere).
@@ -121,13 +131,13 @@ if a newer version exists it downloads the `.dmg`, verifies it with `codesign`,
 replaces its own bundle, relaunches, and shows a dialog saying what happened.
 Set `auto_update = false` in `config.toml` to be notified only.
 
-> **Accessibility must be granted again after each update.** macOS ties the
-> Accessibility permission to the app's code signature, and releases are ad-hoc
-> signed (`codesign --sign -`), so every build has a different identity and the
-> grant cannot carry over. The post-update dialog says so. Signing with a
-> Developer ID certificate is what makes updates fully seamless — no code change
-> is needed for that, `installer::install` already reports the live permission
-> state.
+> **Accessibility survives updates.** Every published release is signed with
+> the same shared `phaciuskey-release` certificate (see CONTRIBUTING.md →
+> Releasing), and macOS ties the Accessibility grant to that signing identity —
+> so auto-updating from one release to the next keeps the grant, no re-approval
+> needed. Only unsigned from-source builds (ad-hoc identities) lose the grant
+> across an update; the post-update dialog reports the live permission state
+> either way.
 
 ### Telex cheat-sheet
 

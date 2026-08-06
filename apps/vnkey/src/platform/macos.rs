@@ -189,27 +189,29 @@ unsafe extern "C" fn tap_callback(
 
     let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
 
-    // The global on/off shortcut outranks everything below — it must work even
-    // while typing is disabled for the focused app, or the user could never
-    // re-enable from the keyboard. Auto-repeat is ignored, or holding the combo
-    // would flip the setting many times a second.
-    if is_toggle_shortcut(keycode, cg.get_flags())
-        && cg.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
-    {
-        state::update(|s| s.enabled = !s.enabled);
-        state::reset();
-        return ptr::null_mut(); // the combo is ours; don't let the app see it
-    }
-
-    // Track which app receives this keystroke, so per-app disable and the tray
-    // menu's "Enable in <app>" item follow the user's focus.
+    // Track which app receives this keystroke, so per-app state and the tray
+    // menu's "Enable in <app>" item follow the user's focus. Done before the
+    // shortcut check: in per-app mode the toggle must apply to the app that
+    // received the combo, not to whichever app got the previous keystroke.
     let pid = cg.get_integer_value_field(EventField::EVENT_TARGET_UNIX_PROCESS_ID);
     if let Some(name) = app_name_for_pid(pid) {
         state::set_current_app(&name);
     }
-    if state::current_app_disabled() {
-        // Everything passes through untouched in a disabled app, including
-        // Backspace — the engine holds no composition here.
+
+    // The on/off shortcut outranks everything below — it must work even while
+    // typing is disabled for the focused app, or the user could never re-enable
+    // from the keyboard. Auto-repeat is ignored, or holding the combo would
+    // flip the setting many times a second.
+    if is_toggle_shortcut(keycode, cg.get_flags())
+        && cg.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
+    {
+        state::toggle_vietnamese();
+        return ptr::null_mut(); // the combo is ours; don't let the app see it
+    }
+
+    if !state::vietnamese_active() {
+        // Everything passes through untouched while typing is off here,
+        // including Backspace — the engine holds no composition.
         state::reset();
         return event;
     }

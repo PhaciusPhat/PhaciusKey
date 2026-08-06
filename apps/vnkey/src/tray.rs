@@ -19,14 +19,23 @@ use crate::update;
 /// The tray icon plus the menu items whose state we update after each change.
 pub struct Tray {
     tray: TrayIcon,
+    /// Disabled line under the header showing the focused app and what a
+    /// keystroke would do there right now.
+    status: MenuItem,
     pub toggle: CheckMenuItem,
     pub app_toggle: CheckMenuItem,
+    pub per_app: CheckMenuItem,
+    method_menu: Submenu,
+    tone_menu: Submenu,
     pub telex: CheckMenuItem,
     pub vni: CheckMenuItem,
     pub modern: CheckMenuItem,
     pub classic: CheckMenuItem,
     pub auto_restore: CheckMenuItem,
     pub start_login: CheckMenuItem,
+    pub auto_update: CheckMenuItem,
+    pub open_config: MenuItem,
+    pub forget_apps: MenuItem,
     pub update: MenuItem,
     pub report: MenuItem,
     pub quit: MenuItem,
@@ -38,11 +47,11 @@ pub struct Tray {
 impl Tray {
     /// Build the tray icon and menu, reflecting the current settings.
     pub fn new(settings: &Settings) -> Result<Self, String> {
-        let header = MenuItem::new(
-            format!("PhaciusKey  v{}", update::CURRENT),
-            false,
-            None,
-        );
+        let err = |e: tray_icon::menu::Error| e.to_string();
+
+        let header = MenuItem::new(format!("PhaciusKey  v{}", update::CURRENT), false, None);
+        let status = MenuItem::new("Type anywhere to begin", false, None);
+
         // The accelerator is a *hint*: the global toggle actually fires from the
         // keyboard hook (an accessory app's menu key-equivalents only work while
         // its menu is open). Unparseable shortcut string → no hint, no shortcut.
@@ -51,12 +60,13 @@ impl Tray {
         // Text and enabled-state follow the focused app; until the first
         // keystroke reveals one, there is nothing to toggle.
         let app_toggle = CheckMenuItem::new("Enable in current app", false, true, None);
+        let per_app =
+            CheckMenuItem::new("Remember on/off per app", true, settings.per_app_mode, None);
 
         let telex = CheckMenuItem::new("Telex", true, settings.method == Method::Telex, None);
         let vni = CheckMenuItem::new("VNI", true, settings.method == Method::Vni, None);
-        let method_menu = Submenu::new("Input method", true);
-        method_menu.append(&telex).map_err(|e| e.to_string())?;
-        method_menu.append(&vni).map_err(|e| e.to_string())?;
+        let method_menu = Submenu::new(method_title(settings), true);
+        method_menu.append_items(&[&telex, &vni]).map_err(err)?;
 
         let modern = CheckMenuItem::new(
             "Modern  ·  hòa",
@@ -70,37 +80,68 @@ impl Tray {
             settings.placement == Placement::Classic,
             None,
         );
-        let tone_menu = Submenu::new("Tone placement", true);
-        tone_menu.append(&modern).map_err(|e| e.to_string())?;
-        tone_menu.append(&classic).map_err(|e| e.to_string())?;
+        let tone_menu = Submenu::new(tone_title(settings), true);
+        tone_menu.append_items(&[&modern, &classic]).map_err(err)?;
 
         let auto_restore =
-            CheckMenuItem::new("Auto-restore English", true, settings.auto_restore, None);
+            CheckMenuItem::new("Auto-restore English words", true, settings.auto_restore, None);
+
+        // Housekeeping lives one level down, keeping the main menu about typing.
         let start_login =
             CheckMenuItem::new("Start at login", true, settings.start_at_login, None);
-        let update = MenuItem::new("Check for updates…", true, None);
+        let auto_update =
+            CheckMenuItem::new("Install updates automatically", true, settings.auto_update, None);
+        let open_config = MenuItem::new("Open config file…", true, None);
+        let forget_apps = MenuItem::new("Forget all per-app settings", true, None);
+        let settings_menu = Submenu::new("Settings", true);
+        settings_menu
+            .append_items(&[
+                &start_login,
+                &auto_update,
+                &PredefinedMenuItem::separator(),
+                &open_config,
+                &forget_apps,
+            ])
+            .map_err(err)?;
+
+        // A glanceable cheat sheet beats sending people to the README mid-word.
         let report = MenuItem::new("Report an issue…", true, None);
+        let help_menu = Submenu::new("Help", true);
+        help_menu
+            .append_items(&[
+                &MenuItem::new("Telex:  aa â · ee ê · oo ô · ow ơ · uw ư · aw ă · dd đ", false, None),
+                &MenuItem::new("Telex tones:  s sắc · f huyền · r hỏi · x ngã · j nặng · z xoá", false, None),
+                &MenuItem::new("VNI:  6 â ê ô · 7 ơ ư · 8 ă · 9 đ · 1–5 tones · 0 xoá", false, None),
+                &PredefinedMenuItem::separator(),
+                &report,
+            ])
+            .map_err(err)?;
+
+        let update = MenuItem::new("Check for updates…", true, None);
         let quit = MenuItem::new("Quit PhaciusKey", true, None);
 
         let menu = Menu::new();
-        let sep = || PredefinedMenuItem::separator();
+        let sep = PredefinedMenuItem::separator;
         menu.append_items(&[
             &header,
+            &status,
             &sep(),
             &toggle,
             &app_toggle,
+            &per_app,
             &sep(),
             &method_menu,
             &tone_menu,
             &auto_restore,
-            &start_login,
+            &sep(),
+            &settings_menu,
+            &help_menu,
             &sep(),
             &update,
-            &report,
             &sep(),
             &quit,
         ])
-        .map_err(|e| e.to_string())?;
+        .map_err(err)?;
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
@@ -111,14 +152,21 @@ impl Tray {
 
         Ok(Self {
             tray,
+            status,
             toggle,
             app_toggle,
+            per_app,
+            method_menu,
+            tone_menu,
             telex,
             vni,
             modern,
             classic,
             auto_restore,
             start_login,
+            auto_update,
+            open_config,
+            forget_apps,
             update,
             report,
             quit,
@@ -160,15 +208,45 @@ impl Tray {
         self.update.set_enabled(true);
     }
 
-    /// Push the current settings into the menu's checkmarks and the tray glyph.
-    /// `current_app` is the app receiving keystrokes, when the hook knows it.
+    /// Push the current settings into the menu's checkmarks, dynamic labels and
+    /// the tray glyph. `current_app` is the app receiving keystrokes, when the
+    /// hook knows it.
     pub fn refresh(&self, settings: &Settings, current_app: Option<&str>) {
-        self.toggle.set_checked(settings.enabled);
+        // What a keystroke would do *right now*: global switch, per-app memory
+        // and the exclusion list all considered.
+        let effective = settings.vietnamese_on(current_app);
+
+        // In per-app mode the main toggle acts on the focused app, so its
+        // checkmark mirrors the effective state; otherwise it is the global
+        // switch. (With no app focused the two coincide.)
+        self.toggle.set_checked(if settings.per_app_mode {
+            effective
+        } else {
+            settings.enabled
+        });
+        self.per_app.set_checked(settings.per_app_mode);
+
+        let status = match current_app {
+            Some(app) => format!(
+                "{app} — typing {}",
+                if effective { "Vietnamese" } else { "English" }
+            ),
+            None => "Type anywhere to begin".to_string(),
+        };
+        self.status.set_text(&status);
+        let _ = self.tray.set_tooltip(Some(format!("PhaciusKey — {status}")));
+
         match current_app {
             Some(app) => {
                 self.app_toggle.set_text(format!("Enable in {app}"));
                 self.app_toggle.set_enabled(true);
-                self.app_toggle.set_checked(!settings.disabled_for(Some(app)));
+                // In per-app mode this is a synonym for the main toggle, so it
+                // shows the effective state; otherwise it is the exclusion list.
+                self.app_toggle.set_checked(if settings.per_app_mode {
+                    effective
+                } else {
+                    !settings.disabled_for(Some(app))
+                });
             }
             None => {
                 self.app_toggle.set_text("Enable in current app");
@@ -176,17 +254,44 @@ impl Tray {
                 self.app_toggle.set_checked(true);
             }
         }
+
+        self.method_menu.set_text(method_title(settings));
+        self.tone_menu.set_text(tone_title(settings));
         self.telex.set_checked(settings.method == Method::Telex);
         self.vni.set_checked(settings.method == Method::Vni);
         self.modern.set_checked(settings.placement == Placement::Modern);
         self.classic.set_checked(settings.placement == Placement::Classic);
         self.auto_restore.set_checked(settings.auto_restore);
         self.start_login.set_checked(settings.start_at_login);
-        // The glyph shows what a keystroke would do *right now*, so a per-app
-        // disable turns it pink even while the master toggle is on.
-        let effective = settings.enabled && !settings.disabled_for(current_app);
+        self.auto_update.set_checked(settings.auto_update);
+        self.forget_apps
+            .set_enabled(!settings.app_modes.is_empty() || !settings.disabled_apps.is_empty());
+
+        // The glyph shows what a keystroke would do right now, so a per-app
+        // off state turns it pink even while the master toggle is on.
         let _ = self.tray.set_icon(Some(status_icon(effective)));
     }
+}
+
+/// Submenu title carrying its current value, readable without opening it.
+fn method_title(settings: &Settings) -> String {
+    format!(
+        "Input method  ·  {}",
+        match settings.method {
+            Method::Telex => "Telex",
+            Method::Vni => "VNI",
+        }
+    )
+}
+
+fn tone_title(settings: &Settings) -> String {
+    format!(
+        "Tone placement  ·  {}",
+        match settings.placement {
+            Placement::Modern => "Modern",
+            Placement::Classic => "Classic",
+        }
+    )
 }
 
 /// The menu-item accelerator hint matching a parsed [`Shortcut`].

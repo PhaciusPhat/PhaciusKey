@@ -39,7 +39,7 @@ fn notify() {
 
 /// Initialize the global shell state. Call once at startup.
 pub fn init(settings: Settings) {
-    let engine = Engine::new(settings.to_core());
+    let engine = Engine::new(settings.to_core(None));
     let _ = SHELL.set(Mutex::new(Shell { engine, settings, current_app: None }));
 }
 
@@ -79,7 +79,32 @@ pub fn settings() -> Settings {
 pub fn update(f: impl FnOnce(&mut Settings)) -> Settings {
     let updated = with(|s| {
         f(&mut s.settings);
-        s.engine.set_config(s.settings.to_core());
+        s.engine.set_config(s.settings.to_core(s.current_app.as_deref()));
+        s.settings.save();
+        s.settings.clone()
+    })
+    .unwrap_or_default();
+    notify();
+    updated
+}
+
+/// Flip Vietnamese typing. In per-app mode this toggles (and remembers) the
+/// state of the app currently receiving keystrokes — EVKey-style — falling back
+/// to the global switch when no app is known yet; otherwise it is the global
+/// switch. Shared by the keyboard shortcut and the tray menu item.
+pub fn toggle_vietnamese() -> Settings {
+    let updated = with(|s| {
+        let app = s.current_app.clone();
+        match app.filter(|_| s.settings.per_app_mode) {
+            Some(app) => {
+                let now = s.settings.vietnamese_on(Some(&app));
+                s.settings.set_app_mode(&app, !now);
+            }
+            None => s.settings.enabled = !s.settings.enabled,
+        }
+        s.engine.set_config(s.settings.to_core(s.current_app.as_deref()));
+        // Mid-word state is meaningless across an on/off flip.
+        s.engine.reset();
         s.settings.save();
         s.settings.clone()
     })
@@ -98,6 +123,9 @@ pub fn set_current_app(name: &str) {
             return false;
         }
         s.current_app = Some(name.to_string());
+        // The effective on/off state can differ per app, so the engine config
+        // must follow the focus, not just the settings.
+        s.engine.set_config(s.settings.to_core(Some(name)));
         s.engine.reset();
         true
     })
@@ -112,8 +140,9 @@ pub fn current_app() -> Option<String> {
     with(|s| s.current_app.clone()).flatten()
 }
 
-/// Whether Vietnamese typing is turned off for the current app.
+/// Whether Vietnamese typing is effectively on right now (global switch,
+/// per-app memory and the exclusion list all considered).
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn current_app_disabled() -> bool {
-    with(|s| s.settings.disabled_for(s.current_app.as_deref())).unwrap_or(false)
+pub fn vietnamese_active() -> bool {
+    with(|s| s.settings.vietnamese_on(s.current_app.as_deref())).unwrap_or(false)
 }

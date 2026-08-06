@@ -4,6 +4,7 @@
 //! config file that works identically on every OS.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use vnkey_core::{Config as CoreConfig, InputMethod, TonePlacementMode};
 
@@ -48,6 +49,14 @@ pub struct Settings {
     /// Apps (by name, case-insensitive) in which Vietnamese typing is off —
     /// keystrokes pass through untouched while one of these is focused.
     pub disabled_apps: Vec<String>,
+    /// EVKey-style per-app memory: when on, the Vietnamese toggle applies to
+    /// the focused app only, and switching apps restores each app's last state.
+    pub per_app_mode: bool,
+    /// Remembered on/off state per app (lowercased name), written by the toggle
+    /// while `per_app_mode` is on. Apps never toggled fall back to [`enabled`].
+    ///
+    /// [`enabled`]: Settings::enabled
+    pub app_modes: BTreeMap<String, bool>,
     /// Version that last ran. Compared against the running build at startup to
     /// notice that a self-update happened, so the user can be told.
     pub last_seen_version: Option<String>,
@@ -64,6 +73,8 @@ impl Default for Settings {
             toggle_shortcut: "ctrl+shift+v".into(),
             start_at_login: false,
             disabled_apps: Vec::new(),
+            per_app_mode: false,
+            app_modes: BTreeMap::new(),
             last_seen_version: None,
         }
     }
@@ -114,8 +125,36 @@ impl Settings {
         }
     }
 
-    /// Map the shell settings onto the engine's config type.
-    pub fn to_core(&self) -> CoreConfig {
+    /// Whether Vietnamese typing is effectively on while `app` is focused.
+    ///
+    /// Precedence: the exclusion list is a hard off; then, in per-app mode, the
+    /// app's remembered state; finally the global toggle as the default.
+    pub fn vietnamese_on(&self, app: Option<&str>) -> bool {
+        if self.disabled_for(app) {
+            return false;
+        }
+        if self.per_app_mode {
+            if let Some(&remembered) =
+                app.and_then(|a| self.app_modes.get(&a.to_ascii_lowercase()))
+            {
+                return remembered;
+            }
+        }
+        self.enabled
+    }
+
+    /// Remember `on` as `app`'s Vietnamese state. Turning an app *on* also
+    /// lifts a hard exclusion — otherwise the toggle would appear dead there.
+    pub fn set_app_mode(&mut self, app: &str, on: bool) {
+        if on {
+            self.disabled_apps.retain(|d| !d.eq_ignore_ascii_case(app));
+        }
+        self.app_modes.insert(app.to_ascii_lowercase(), on);
+    }
+
+    /// Map the shell settings onto the engine's config type, resolving the
+    /// effective on/off state for the app currently receiving keystrokes.
+    pub fn to_core(&self, app: Option<&str>) -> CoreConfig {
         CoreConfig {
             method: match self.method {
                 Method::Telex => InputMethod::Telex,
@@ -125,7 +164,7 @@ impl Settings {
                 Placement::Modern => TonePlacementMode::Modern,
                 Placement::Classic => TonePlacementMode::Classic,
             },
-            enabled: self.enabled,
+            enabled: self.vietnamese_on(app),
             auto_restore: self.auto_restore,
         }
     }
@@ -214,5 +253,34 @@ mod tests {
         assert!(settings.disabled_for(Some("terminal")));
         assert!(!settings.disabled_for(Some("Safari")));
         assert!(!settings.disabled_for(None));
+    }
+
+    #[test]
+    fn per_app_memory_beats_global_and_exclusion_beats_memory() {
+        let mut settings = Settings { per_app_mode: true, ..Default::default() };
+        // No memory yet: falls back to the global toggle.
+        assert!(settings.vietnamese_on(Some("Safari")));
+        settings.enabled = false;
+        assert!(!settings.vietnamese_on(Some("Safari")));
+
+        // Remembered state wins over the global default, case-insensitively.
+        settings.set_app_mode("Safari", true);
+        assert!(settings.vietnamese_on(Some("safari")));
+        assert!(!settings.vietnamese_on(Some("Terminal")));
+
+        // A hard exclusion outranks the memory…
+        settings.disabled_apps.push("Safari".into());
+        assert!(!settings.vietnamese_on(Some("Safari")));
+        // …until an explicit "turn on" lifts it.
+        settings.set_app_mode("safari", true);
+        assert!(settings.vietnamese_on(Some("Safari")));
+        assert!(settings.disabled_apps.is_empty());
+    }
+
+    #[test]
+    fn memory_is_inert_while_per_app_mode_is_off() {
+        let mut settings = Settings::default();
+        settings.set_app_mode("Safari", false);
+        assert!(settings.vietnamese_on(Some("Safari"))); // global ON wins
     }
 }
