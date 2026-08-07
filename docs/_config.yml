@@ -9,7 +9,7 @@ baseurl: "/phacius_vnkey"
 
 # Project
 repo: https://github.com/PhaciusPhat/phacius_vnkey
-version: 0.0.17
+version: 0.0.18
 
 # Google-analytics (leave the id empty to keep the tag off)
 google-analytics:
