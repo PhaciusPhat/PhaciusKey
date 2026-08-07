@@ -6,7 +6,9 @@
 //! must swallow the original keystroke and inject replacement text, which
 //! requires returning `NULL` from the tap callback.
 //!
-//! Event creation and injection still use the safe `core-graphics` API.
+//! Event creation uses the safe `core-graphics` API; posting goes through raw
+//! `CGEventTapPostEvent` (the wrapper only exposes `CGEventPost`, which is the
+//! wrong call from inside a tap callback — see `inject`).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -22,7 +24,7 @@ use core_foundation::mach_port::{CFMachPort, CFMachPortRef};
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource};
 use core_foundation::string::{CFString, CFStringRef};
 
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, EventField};
+use core_graphics::event::{CGEvent, CGEventFlags, EventField};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use foreign_types::ForeignType;
 
@@ -63,6 +65,12 @@ extern "C" {
         user_info: *mut c_void,
     ) -> CFMachPortRef;
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    /// Posts an event from inside a tap callback at this tap's position in the
+    /// event stream — the API designed for replacing a tapped keystroke.
+    /// Unlike `CGEventPost(kCGHIDEventTap, …)`, the posted event keeps its
+    /// order relative to keystrokes already in flight and is only seen by taps
+    /// *after* ours, so injected events never re-enter this callback.
+    fn CGEventTapPostEvent(proxy: CGEventTapProxy, event: CGEventRefRaw);
     fn CGEventKeyboardGetUnicodeString(
         event: CGEventRefRaw,
         max_len: usize,
@@ -154,7 +162,7 @@ fn create_tap() -> Result<(CFMachPort, CFRunLoopSource), String> {
 /// The C-ABI tap callback. Returns the original event pointer to pass a key
 /// through, or `NULL` to swallow it.
 unsafe extern "C" fn tap_callback(
-    _proxy: CGEventTapProxy,
+    proxy: CGEventTapProxy,
     etype: u32,
     event: CGEventRefRaw,
     _user_info: *mut c_void,
@@ -241,8 +249,12 @@ unsafe extern "C" fn tap_callback(
         if actions.is_empty() {
             return event; // not composing — let the native Backspace run
         }
-        inject(&actions);
-        return ptr::null_mut(); // we already redrew; swallow the original
+        if inject(proxy, &actions) {
+            return ptr::null_mut(); // we already redrew; swallow the original
+        }
+        // Injection unavailable: the native Backspace still deletes one
+        // displayed character, which is exactly what the engine recorded.
+        return event;
     }
 
     let ch = match read_char(event) {
@@ -267,8 +279,13 @@ unsafe extern "C" fn tap_callback(
         return event; // pass through
     }
 
-    inject(&actions);
-    ptr::null_mut() // swallow the original keystroke
+    if inject(proxy, &actions) {
+        ptr::null_mut() // swallow the original keystroke
+    } else {
+        // Injection unavailable: pass the raw keystroke through rather than
+        // swallowing it with no replacement — a plain letter beats a lost one.
+        event
+    }
 }
 
 /// Whether this keydown is the configured enable/disable shortcut.
@@ -403,42 +420,66 @@ unsafe fn read_char(event: CGEventRefRaw) -> Option<char> {
     String::from_utf16_lossy(&buf[..len.min(buf.len())]).chars().next()
 }
 
-/// Synthesize the edit actions as `CGEvent`s, each tagged as synthetic.
-fn inject(actions: &[EditAction]) {
+/// Synthesize the edit actions as `CGEvent`s, each tagged as synthetic, and
+/// post them at this tap's position via `CGEventTapPostEvent`.
+///
+/// Returns `false` when nothing was posted — the caller must then pass the
+/// original keystroke through instead of swallowing it, or the character is
+/// silently lost (the "sometimes the first letter of a word vanishes" bug).
+/// Every event is built before any is posted, so a mid-sequence creation
+/// failure falls back to the untouched keystroke rather than a half-applied
+/// edit.
+fn inject(proxy: CGEventTapProxy, actions: &[EditAction]) -> bool {
     let source = match CGEventSource::new(CGEventSourceStateID::HIDSystemState) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
+    let mut events: Vec<CGEvent> = Vec::new();
     for action in actions {
         match action {
             EditAction::Backspace(count) => {
                 for _ in 0..*count {
-                    post_key(&source, VK_DELETE, true);
-                    post_key(&source, VK_DELETE, false);
+                    let (Some(down), Some(up)) = (
+                        make_key(&source, VK_DELETE, true),
+                        make_key(&source, VK_DELETE, false),
+                    ) else {
+                        return false;
+                    };
+                    events.push(down);
+                    events.push(up);
                 }
             }
+            // An empty insert is the engine saying "swallow the key, the
+            // screen is already right" — nothing to post. A keycode-0 keydown
+            // with no string could be read as the letter 'a' by apps that
+            // fall back to the keycode.
+            EditAction::Insert(text) if text.is_empty() => {}
             EditAction::Insert(text) => {
+                let (Some(down), Some(up)) =
+                    (make_key(&source, 0, true), make_key(&source, 0, false))
+                else {
+                    return false;
+                };
                 let utf16: Vec<u16> = text.encode_utf16().collect();
-                if let Ok(down) = CGEvent::new_keyboard_event(source.clone(), 0, true) {
-                    down.set_string_from_utf16_unchecked(&utf16);
-                    down.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARKER);
-                    down.post(CGEventTapLocation::HID);
-                }
-                if let Ok(up) = CGEvent::new_keyboard_event(source.clone(), 0, false) {
-                    up.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARKER);
-                    up.post(CGEventTapLocation::HID);
-                }
+                down.set_string_from_utf16_unchecked(&utf16);
+                events.push(down);
+                events.push(up);
             }
         }
     }
+
+    for ev in &events {
+        unsafe { CGEventTapPostEvent(proxy, ev.as_ptr() as CGEventRefRaw) };
+    }
+    true
 }
 
-fn post_key(source: &CGEventSource, keycode: u16, down: bool) {
-    if let Ok(ev) = CGEvent::new_keyboard_event(source.clone(), keycode, down) {
-        ev.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARKER);
-        ev.post(CGEventTapLocation::HID);
-    }
+/// A synthetic key event, tagged so the tap ignores it if it ever loops back.
+fn make_key(source: &CGEventSource, keycode: u16, down: bool) -> Option<CGEvent> {
+    let ev = CGEvent::new_keyboard_event(source.clone(), keycode, down).ok()?;
+    ev.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARKER);
+    Some(ev)
 }
 
 /// Check whether the process is trusted for Accessibility. When `prompt` is
