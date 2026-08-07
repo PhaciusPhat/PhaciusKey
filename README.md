@@ -30,7 +30,8 @@ Grab `PhaciusKey-<version>.dmg`, drag it to Applications, done. No Rust, no tool
    System Settings → Privacy & Security → Accessibility, then **relaunch the app**
    (the keyboard hook is installed once at startup).
 
-> **First launch blocked?** The app is ad-hoc signed, not notarized, so macOS
+> **First launch blocked?** The app is signed with the project's self-signed
+> certificate, not notarized, so macOS
 > may say it's from an "unidentified developer." Right-click (or Control-click)
 > **PhaciusKey** in Applications → **Open** → **Open** again to allow it.
 > Alternatively: `xattr -dr com.apple.quarantine /Applications/PhaciusKey.app`
@@ -97,9 +98,11 @@ prompted (System Settings → Privacy & Security → Accessibility), then relaun
 bash scripts/package-app.sh
 ```
 
-Builds the release binary, assembles `PhaciusKey.app`, ad-hoc signs it, and
-writes `dist/PhaciusKey-<version>.dmg`. To ship notarized, replace the
-`codesign --sign -` line with your Developer ID and run `xcrun notarytool`.
+Builds the release binary, assembles `PhaciusKey.app`, signs it with the shared
+`phaciuskey-release` identity (see CONTRIBUTING.md → Releasing; set
+`PHACIUSKEY_ALLOW_ADHOC=1` for a personal ad-hoc build), and writes
+`dist/PhaciusKey-<version>.dmg`. To ship notarized, sign with a Developer ID
+instead and run `xcrun notarytool`.
 
 ---
 
@@ -123,7 +126,9 @@ when Vietnamese is active and amber (**E**) when it is not.
 
 **Settings…** opens a window (rendered with `wry`, in the same dark glass
 style as the website) with every option in one place — including a per-app
-list where each app you've typed in gets its own on/off switch.
+list where each app you've typed in gets its own on/off switch, and an app
+search whose suggestions cover every installed application, not just the ones
+that already ran.
 
 Settings persist to `~/Library/Application Support/vnkey/config.toml` on macOS
 (the OS config dir elsewhere).
