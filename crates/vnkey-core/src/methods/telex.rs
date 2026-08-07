@@ -97,10 +97,11 @@ impl TelexState {
             self.is_foreign = true;
         }
 
-        // --- "uo" + w takes both horns at once ---
+        // --- "uo"/"ua" + w takes the cluster horn ---
         // Checked before the single-vowel pairs below, which would otherwise put
-        // a horn on the 'o' alone and give "thuơng" instead of "thương".
-        if lower == 'w' && self.syllable.ends_with("uo") {
+        // a horn on the 'o' alone ("thuơng" instead of "thương") or a breve on
+        // the trailing 'a' ("truă" instead of "trưa").
+        if lower == 'w' && (self.syllable.ends_with("uo") || self.syllable.ends_with("ua")) {
             if let Some(new_syl) = apply_horn_cluster(&self.syllable) {
                 self.syllable = new_syl;
                 return;
@@ -338,6 +339,20 @@ fn apply_horn_cluster(syllable: &str) -> Option<String> {
         return Some(out);
     }
 
+    // In the "ua" cluster the horn belongs to the u ("truaw" → "trưa", like
+    // "mưa"/"chưa") — the plain reverse scan below would breve the 'a' into
+    // "truă". After a "qu" onset the u is not part of the nucleus, so 'w'
+    // falls through to the scan and marks the 'a' ("quawng" → "quăng").
+    if let Some(pos) = syllable.rfind("ua") {
+        let after_q = syllable[..pos].ends_with('q');
+        if !after_q {
+            let mut out = syllable[..pos].to_string();
+            out.push('ư');
+            out.push_str(&syllable[pos + 1..]);
+            return Some(out);
+        }
+    }
+
     let chars: Vec<char> = syllable.chars().collect();
     for i in (0..chars.len()).rev() {
         let replacement = match chars[i] {
@@ -407,6 +422,22 @@ mod tests {
         assert_eq!(telex("eee").0, "ee");
         assert_eq!(telex("ddd").0, "dd");
         assert_eq!(telex("oww").0, "ow");
+    }
+
+    #[test]
+    fn horn_key_after_ua_horns_the_u() {
+        // The beta-reported bug: "truaw" gave "truă". In the "ua" cluster the
+        // horn belongs to the u ("trưa", "mưa", "chưa"), like the "uo" pair.
+        assert_eq!(telex("truaw").0, "trưa");
+        assert_eq!(telex("muaw").0, "mưa");
+        assert_eq!(telex("chuaw").0, "chưa");
+    }
+
+    #[test]
+    fn horn_key_after_qu_onset_still_gives_breve() {
+        // After the "qu" onset the 'u' is not part of the nucleus, so 'w'
+        // falls to the 'a': "quawng" → "quăng", never "qưang".
+        assert_eq!(telex("quawng").0, "quăng");
     }
 
     #[test]
