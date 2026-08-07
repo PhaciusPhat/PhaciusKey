@@ -208,7 +208,8 @@
       </div>
       <div id="apps"></div>
       <div class="addrow">
-        <input type="text" id="addname" placeholder="App name, e.g. Terminal" spellcheck="false" autocomplete="off">
+        <input type="text" id="addname" list="applist" placeholder="Search installed apps, e.g. Terminal" spellcheck="false" autocomplete="off">
+        <datalist id="applist"></datalist>
         <button class="btn" id="addbtn">Turn off in app</button>
       </div>
     </section>
@@ -280,8 +281,22 @@
     });
   }
 
+  // Search suggestions: every installed app, not only the ones already seen.
+  // Rebuilt only when the list actually changes, so the datalist popover isn't
+  // torn down mid-search by the frequent state pushes.
+  var installedKey = null;
+  var renderInstalled = function (names) {
+    var key = names.join("\n");
+    if (key === installedKey) return;
+    installedKey = key;
+    $("applist").innerHTML = names.map(function (n) {
+      return '<option value="' + esc(n) + '">';
+    }).join("");
+  };
+
   window.__setState = function (s) {
     $("version").textContent = "v" + s.version;
+    renderInstalled(s.installed_apps || []);
     ["enabled", "auto_restore", "per_app_mode", "start_at_login", "auto_update"].forEach(function (key) {
       $(key).checked = !!s[key];
     });

@@ -8,6 +8,8 @@
 //! settings snapshot is pushed back into the page via `evaluate_script`, so
 //! the window always mirrors reality instead of tracking its own copy.
 
+use std::cell::RefCell;
+
 use serde_json::{json, Value};
 use tao::dpi::LogicalSize;
 use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
@@ -15,13 +17,18 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::WebView;
 
 use crate::config::{parse_shortcut, Method, Placement, Settings};
-use crate::{autostart, state, update, UserEvent};
+use crate::{autostart, platform, state, update, UserEvent};
 
 const HTML: &str = include_str!("settings.html");
 
 pub struct SettingsWindow {
     window: Window,
     webview: WebView,
+    /// Installed applications feeding the page's app-search suggestions.
+    /// Scanned when the window is created and again on every `show`, so a
+    /// fresh install appears the next time the window opens — while the
+    /// frequent `push_state` calls never touch the filesystem.
+    installed_apps: RefCell<Vec<String>>,
 }
 
 impl SettingsWindow {
@@ -48,7 +55,11 @@ impl SettingsWindow {
             .build(&window)
             .map_err(|e| e.to_string())?;
 
-        Ok(Self { window, webview })
+        Ok(Self {
+            window,
+            webview,
+            installed_apps: RefCell::new(platform::installed_apps()),
+        })
     }
 
     pub fn window_id(&self) -> WindowId {
@@ -57,6 +68,7 @@ impl SettingsWindow {
 
     /// Bring the (possibly hidden) window back in front of the user.
     pub fn show(&self) {
+        *self.installed_apps.borrow_mut() = platform::installed_apps();
         self.window.set_visible(true);
         self.window.set_focus();
     }
@@ -68,13 +80,18 @@ impl SettingsWindow {
 
     /// Push the current settings snapshot into the page.
     pub fn push_state(&self) {
-        let state = state_json(&state::settings(), state::current_app().as_deref());
+        let state = state_json(
+            &state::settings(),
+            state::current_app().as_deref(),
+            &self.installed_apps.borrow(),
+        );
         let _ = self.webview.evaluate_script(&format!("window.__setState({state})"));
     }
 }
 
-/// The page's state snapshot: settings plus the derived per-app rows.
-fn state_json(s: &Settings, current_app: Option<&str>) -> String {
+/// The page's state snapshot: settings, the derived per-app rows, and the
+/// installed apps offered as search suggestions.
+fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]) -> String {
     // Union of every app the settings or this session knows about, keyed
     // case-insensitively, preferring the real-cased name for display.
     let mut names: Vec<String> = Vec::new();
@@ -126,6 +143,7 @@ fn state_json(s: &Settings, current_app: Option<&str>) -> String {
         "shortcut_valid": parse_shortcut(&s.toggle_shortcut).is_some(),
         "current_app": current_app,
         "apps": apps,
+        "installed_apps": installed_apps,
     })
     .to_string()
 }

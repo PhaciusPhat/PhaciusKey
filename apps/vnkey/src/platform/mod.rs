@@ -40,6 +40,21 @@ pub fn request_permission() {
     macos::request_accessibility_permission(true);
 }
 
+/// Names of the applications installed on this machine, sorted and deduped
+/// case-insensitively. Feeds the settings window's app search, so the user can
+/// configure any installed app — not only the ones that already ran this
+/// session. Empty where no lookup is implemented.
+pub fn installed_apps() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::installed_apps()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
+
 /// Whether the process currently holds the permission needed to intercept
 /// keystrokes. Never prompts — safe to poll. Always true where none is needed.
 pub fn permission_granted() -> bool {

@@ -12,6 +12,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::os::raw::c_void;
+use std::path::{Path, PathBuf};
 use std::ptr;
 
 use core_foundation::base::TCFType;
@@ -353,6 +354,44 @@ fn app_name_from_path(path: &str) -> Option<String> {
     path.rsplit('/').find(|s| !s.is_empty()).map(str::to_string)
 }
 
+/// Names of every `.app` bundle installed in the standard application
+/// folders, using the same display name convention as [`app_name_from_path`]
+/// ("Safari.app" → "Safari") so entries line up with the per-app settings.
+pub(super) fn installed_apps() -> Vec<String> {
+    let mut roots = vec![
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join("Applications"));
+    }
+    let mut names = Vec::new();
+    for root in &roots {
+        collect_apps(root, 1, &mut names);
+    }
+    names.sort_by_key(|n| n.to_ascii_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names
+}
+
+/// Push the name of every `.app` bundle under `dir`, descending `depth`
+/// levels into plain subfolders (e.g. /Applications/Utilities) but never into
+/// a bundle itself — helpers nested inside another app aren't user-facing.
+fn collect_apps(dir: &Path, depth: usize, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if let Some(stem) = name.strip_suffix(".app") {
+            if !stem.is_empty() {
+                out.push(stem.to_string());
+            }
+        } else if depth > 0 && !name.starts_with('.') && entry.path().is_dir() {
+            collect_apps(&entry.path(), depth - 1, out);
+        }
+    }
+}
+
 /// Read the Unicode character the key would have produced.
 unsafe fn read_char(event: CGEventRefRaw) -> Option<char> {
     let mut buf = [0u16; 4];
@@ -415,5 +454,30 @@ pub(super) fn request_accessibility_permission(prompt: bool) -> bool {
         };
         let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
         AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collects_app_bundles_one_folder_deep() {
+        let root = std::env::temp_dir().join(format!("vnkey-apps-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // Helpers nested inside a bundle and folders below the depth limit
+        // must both be skipped; loose files and dot-folders are ignored.
+        std::fs::create_dir_all(root.join("Safari.app/Contents/Helper.app")).unwrap();
+        std::fs::create_dir_all(root.join("Utilities/Terminal.app")).unwrap();
+        std::fs::create_dir_all(root.join("Utilities/Deeper/Hidden.app")).unwrap();
+        std::fs::create_dir_all(root.join(".Trashes/Ghost.app")).unwrap();
+        std::fs::write(root.join("notes.txt"), "").unwrap();
+
+        let mut names = Vec::new();
+        collect_apps(&root, 1, &mut names);
+        names.sort();
+        assert_eq!(names, ["Safari", "Terminal"]);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
