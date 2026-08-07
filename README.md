@@ -8,6 +8,10 @@ engine driving thin per-OS keyboard hooks.
 - Smart spell-check — only applies diacritics when the result is a valid Vietnamese syllable
 - Auto-restores raw keystrokes for English and other non-Vietnamese words
 - Modern and Classic tone placement (`hòa` vs `hoà`)
+- **Esc** restores the raw keystrokes of the word being composed (`đấy` → `ddaays`)
+- **Macros** — a word you define expands when you finish it (`vd` → `ví dụ`)
+- Warns from the tray when a password field's Secure Input pauses Vietnamese typing
+- Per-app **slow typing** mode for apps that drop rapid synthetic keystrokes
 - Per-app on/off memory (EVKey-style): the toggle can remember Vietnamese
   on/off separately for every app and restore it as you switch focus
 - Menu-bar / system-tray control (toggle, method, tone placement, auto-restore)

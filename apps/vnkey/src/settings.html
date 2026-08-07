@@ -201,6 +201,16 @@
     </section>
 
     <section class="glass">
+      <h2>Macros</h2>
+      <div id="macros"></div>
+      <div class="addrow">
+        <input type="text" id="mtrig" placeholder="Shortcut, e.g. vd" spellcheck="false" autocomplete="off">
+        <input type="text" id="mexp" placeholder="Expands to, e.g. ví dụ" spellcheck="false" autocomplete="off">
+        <button class="btn" id="maddbtn">Add macro</button>
+      </div>
+    </section>
+
+    <section class="glass">
       <h2>Per-app</h2>
       <div class="row">
         <div class="lbl"><b>Remember on/off per app</b><small>Each app keeps its own Vietnamese state as you switch</small></div>
@@ -211,6 +221,18 @@
         <input type="text" id="addname" list="applist" placeholder="Search installed apps, e.g. Terminal" spellcheck="false" autocomplete="off">
         <datalist id="applist"></datalist>
         <button class="btn" id="addbtn">Turn off in app</button>
+      </div>
+    </section>
+
+    <section class="glass">
+      <h2>Compatibility</h2>
+      <div class="row">
+        <div class="lbl"><b>Slow typing</b><small>Brief pause between injected keys, for apps that drop fast bursts</small></div>
+      </div>
+      <div id="slowapps"></div>
+      <div class="addrow">
+        <input type="text" id="slowname" list="applist" placeholder="Search installed apps, e.g. IntelliJ IDEA" spellcheck="false" autocomplete="off">
+        <button class="btn" id="slowbtn">Enable slow typing</button>
       </div>
     </section>
 
@@ -271,6 +293,26 @@
   $("addbtn").addEventListener("click", addApp);
   addname.addEventListener("keydown", function (e) { if (e.key === "Enter") addApp(); });
 
+  var mtrig = $("mtrig"), mexp = $("mexp");
+  var addMacro = function () {
+    var trigger = mtrig.value.trim(), expansion = mexp.value;
+    if (!trigger || !expansion) return;
+    mtrig.value = ""; mexp.value = "";
+    send({ cmd: "macro_set", trigger: trigger, expansion: expansion });
+  };
+  $("maddbtn").addEventListener("click", addMacro);
+  mexp.addEventListener("keydown", function (e) { if (e.key === "Enter") addMacro(); });
+
+  var slowname = $("slowname");
+  var addSlow = function () {
+    var name = slowname.value.trim();
+    if (!name) return;
+    slowname.value = "";
+    send({ cmd: "slow_app", name: name, on: true });
+  };
+  $("slowbtn").addEventListener("click", addSlow);
+  slowname.addEventListener("keydown", function (e) { if (e.key === "Enter") addSlow(); });
+
   $("open_config").addEventListener("click", function () { send({ cmd: "open_config" }); });
   $("forget").addEventListener("click", function () { send({ cmd: "forget_apps" }); });
 
@@ -312,27 +354,65 @@
     if (!s.apps.length) {
       box.innerHTML = '<div class="empty">No apps yet — switch to an app and it appears here, ' +
                       'or add one below to turn Vietnamese off there.</div>';
-      return;
+    } else {
+      box.innerHTML = s.apps.map(function (a) {
+        var tag = a.name === s.current_app ? '<span class="tag">active</span>' : "";
+        return '<div class="row">' +
+          '<div class="lbl"><b>' + esc(a.name) + tag + "</b></div>" +
+          '<button class="rm" title="Forget this app" data-name="' + esc(a.name) + '">✕</button>' +
+          '<label class="sw"><input type="checkbox" data-name="' + esc(a.name) + '"' +
+          (a.on ? " checked" : "") + "><i></i></label>" +
+          "</div>";
+      }).join("");
+      Array.prototype.forEach.call(box.querySelectorAll("input[data-name]"), function (el) {
+        el.addEventListener("change", function () {
+          send({ cmd: "app", name: this.dataset.name, on: this.checked });
+        });
+      });
+      Array.prototype.forEach.call(box.querySelectorAll("button.rm"), function (el) {
+        el.addEventListener("click", function () {
+          send({ cmd: "app_remove", name: this.dataset.name });
+        });
+      });
     }
-    box.innerHTML = s.apps.map(function (a) {
-      var tag = a.name === s.current_app ? '<span class="tag">active</span>' : "";
-      return '<div class="row">' +
-        '<div class="lbl"><b>' + esc(a.name) + tag + "</b></div>" +
-        '<button class="rm" title="Forget this app" data-name="' + esc(a.name) + '">✕</button>' +
-        '<label class="sw"><input type="checkbox" data-name="' + esc(a.name) + '"' +
-        (a.on ? " checked" : "") + "><i></i></label>" +
-        "</div>";
-    }).join("");
-    Array.prototype.forEach.call(box.querySelectorAll("input[data-name]"), function (el) {
-      el.addEventListener("change", function () {
-        send({ cmd: "app", name: this.dataset.name, on: this.checked });
+
+    var mbox = $("macros");
+    var macros = s.macros || [];
+    if (!macros.length) {
+      mbox.innerHTML = '<div class="empty">No macros yet — a word you add here expands when you ' +
+                       'finish it, e.g. “vd” becomes “ví dụ”.</div>';
+    } else {
+      mbox.innerHTML = macros.map(function (m) {
+        return '<div class="row">' +
+          '<div class="lbl"><b>' + esc(m.trigger) + '</b><small>' + esc(m.expansion) + "</small></div>" +
+          '<button class="rm" title="Remove this macro" data-trigger="' + esc(m.trigger) + '">✕</button>' +
+          "</div>";
+      }).join("");
+      Array.prototype.forEach.call(mbox.querySelectorAll("button.rm"), function (el) {
+        el.addEventListener("click", function () {
+          send({ cmd: "macro_remove", trigger: this.dataset.trigger });
+        });
       });
-    });
-    Array.prototype.forEach.call(box.querySelectorAll("button.rm"), function (el) {
-      el.addEventListener("click", function () {
-        send({ cmd: "app_remove", name: this.dataset.name });
+    }
+
+    var sbox = $("slowapps");
+    var slow = s.slow_apps || [];
+    if (!slow.length) {
+      sbox.innerHTML = '<div class="empty">No apps listed — only add one if it drops characters ' +
+                       'while typing fast.</div>';
+    } else {
+      sbox.innerHTML = slow.map(function (name) {
+        return '<div class="row">' +
+          '<div class="lbl"><b>' + esc(name) + "</b></div>" +
+          '<button class="rm" title="Back to normal speed" data-name="' + esc(name) + '">✕</button>' +
+          "</div>";
+      }).join("");
+      Array.prototype.forEach.call(sbox.querySelectorAll("button.rm"), function (el) {
+        el.addEventListener("click", function () {
+          send({ cmd: "slow_app", name: this.dataset.name, on: false });
+        });
       });
-    });
+    }
   };
 
   send({ cmd: "init" });

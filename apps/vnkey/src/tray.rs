@@ -95,6 +95,7 @@ impl Tray {
                 &MenuItem::new("Telex:  aa â · ee ê · oo ô · ow ơ · uw ư · aw ă · dd đ", false, None),
                 &MenuItem::new("Telex tones:  s sắc · f huyền · r hỏi · x ngã · j nặng · z xoá", false, None),
                 &MenuItem::new("VNI:  6 â ê ô · 7 ơ ư · 8 ă · 9 đ · 1–5 tones · 0 xoá", false, None),
+                &MenuItem::new("Esc:  restore the word exactly as you typed it", false, None),
                 &PredefinedMenuItem::separator(),
                 &report,
             ])
@@ -206,12 +207,19 @@ impl Tray {
         });
         self.per_app.set_checked(settings.per_app_mode);
 
-        let status = match current_app {
-            Some(app) => format!(
-                "{app} — typing {}",
-                if effective { "Vietnamese" } else { "English" }
-            ),
-            None => "Type anywhere to begin".to_string(),
+        // Secure Event Input (a focused password field, some terminals) blinds
+        // every event tap — typing silently runs raw. Say so, or the user is
+        // left wondering why Vietnamese "randomly" stopped.
+        let status = if crate::platform::secure_input_active() {
+            "⚠ Secure input on — Vietnamese paused (password field?)".to_string()
+        } else {
+            match current_app {
+                Some(app) => format!(
+                    "{app} — typing {}",
+                    if effective { "Vietnamese" } else { "English" }
+                ),
+                None => "Type anywhere to begin".to_string(),
+            }
         };
         self.status.set_text(&status);
         let _ = self.tray.set_tooltip(Some(format!("PhaciusKey — {status}")));
@@ -310,10 +318,9 @@ fn accelerator_for(sc: Shortcut) -> Option<Accelerator> {
 
 // ── Icon rendering ─────────────────────────────────────────────────────────────
 
-/// Render the menu-bar glyph: a single glowing letter on a dark glass badge —
-/// **V** (jade) when Vietnamese typing is on, **E** (gilt amber) when off.
-/// Matches the website's "lacquer night" glass theme: lacquer base, top sheen,
-/// light rim. Drawn at 4× and box-downsampled for crisp, anti-aliased edges.
+/// Render the menu-bar glyph: a bare letter on a transparent background —
+/// **V** (green) when Vietnamese typing is on, **E** (red) when off.
+/// Drawn at 4× and box-downsampled for crisp, anti-aliased edges.
 fn status_icon(enabled: bool) -> Icon {
     let rgba = render_rgba(36, enabled);
     Icon::from_rgba(rgba, 36, 36).expect("valid rgba icon")
@@ -321,42 +328,25 @@ fn status_icon(enabled: bool) -> Icon {
 
 type Rgb = (f32, f32, f32);
 
-/// Draw the neon badge to a straight-alpha RGBA buffer of `size`×`size` pixels.
+/// Draw the letter to a straight-alpha RGBA buffer of `size`×`size` pixels.
 /// Shared by the small tray glyph and the large app icon.
 pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
     const SS: usize = 4; // supersample factor
     let big = size * SS;
     let n = big * big;
-
-    // Glass palette (shared with the website): glowing tube color + a hot
-    // near-white core, on a deep blue-black lacquer badge.
-    let (neon, core): (Rgb, Rgb) = if enabled {
-        ((56.0, 225.0, 169.0), (216.0, 255.0, 240.0)) // jade — Vietnamese
-    } else {
-        ((242.0, 201.0, 125.0), (255.0, 240.0, 214.0)) // gilt amber — English
-    };
-    let badge: Rgb = (7.0, 11.0, 22.0); // lacquer night, so the glow reads as glow
-
     let big_f = big as f32;
-    let inset = big_f * 0.055;
-    let radius = big_f * 0.26;
-    let (x0, y0, x1, y1) = (inset, inset, big_f - inset, big_f - inset);
 
-    // Badge mask (1 inside the rounded rect).
-    let mut mask = vec![0f32; n];
-    for y in 0..big {
-        for x in 0..big {
-            if inside_rounded(x as f32 + 0.5, y as f32 + 0.5, x0, y0, x1, y1, radius) {
-                mask[y * big + x] = 1.0;
-            }
-        }
-    }
+    let color: Rgb = if enabled {
+        (52.0, 199.0, 89.0) // green — Vietnamese
+    } else {
+        (255.0, 59.0, 48.0) // red — English
+    };
 
     // Letter coverage (1 on the strokes).
     let mut cov = vec![0f32; n];
-    let hw = big_f * 0.058; // stroke half-width — chunky tube
-    let (ty0, ty1) = (big_f * 0.31, big_f * 0.69);
-    let lw = big_f * 0.34;
+    let hw = big_f * 0.075; // stroke half-width
+    let (ty0, ty1) = (big_f * 0.14, big_f * 0.86);
+    let lw = big_f * 0.56;
     let cx = big_f * 0.5;
     let lx = cx - lw * 0.5;
     if enabled {
@@ -371,67 +361,23 @@ pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
         stroke(&mut cov, big, lx, ty1, lx + lw, ty1, hw);
     }
 
-    // Glow = blurred letter coverage.
-    let glow = box_blur(&cov, big, (big_f * 0.05) as usize, 3);
-
-    // Compose: badge with a glassy top sheen and light rim, then additive
-    // glow, then the bright letter core.
-    let rim = big_f * 0.028; // light inner border — the "edge" of the glass
-    let mut hi = vec![0u8; n * 4];
-    for i in 0..n {
-        if mask[i] <= 0.0 {
-            continue; // transparent outside the badge
-        }
-        let (px, py) = ((i % big) as f32 + 0.5, (i / big) as f32 + 0.5);
-        // Sheen: light catching the top of the pane, fading out by mid-badge.
-        let sheen = 30.0 * (1.0 - py / (big_f * 0.55)).max(0.0);
-        // Rim: pixels between the badge edge and an inset rounded rect.
-        let on_rim = !inside_rounded(
-            px, py,
-            x0 + rim, y0 + rim, x1 - rim, y1 - rim,
-            (radius - rim).max(0.0),
-        );
-        let edge = if on_rim { 46.0 } else { 0.0 };
-        let g = (glow[i] * 2.2).min(1.0);
-        let mut r = badge.0 + sheen + edge + neon.0 * g;
-        let mut gg = badge.1 + sheen + edge + neon.1 * g;
-        let mut b = badge.2 + sheen + edge + neon.2 * g;
-        if cov[i] > 0.0 {
-            r = core.0;
-            gg = core.1;
-            b = core.2;
-        }
-        let o = i * 4;
-        hi[o] = r.min(255.0) as u8;
-        hi[o + 1] = gg.min(255.0) as u8;
-        hi[o + 2] = b.min(255.0) as u8;
-        hi[o + 3] = 0xFF;
-    }
-
-    // Box-downsample with premultiplied alpha (avoids dark edge fringing).
+    // Box-downsample the coverage into the alpha channel; the color is flat,
+    // so anti-aliasing is purely alpha and there is no edge fringing.
     let mut out = vec![0u8; size * size * 4];
-    let samples = (SS * SS) as u32;
+    let samples = (SS * SS) as f32;
     for y in 0..size {
         for x in 0..size {
-            let (mut sr, mut sg, mut sb, mut sa) = (0u32, 0u32, 0u32, 0u32);
+            let mut sum = 0f32;
             for sy in 0..SS {
                 for sx in 0..SS {
-                    let i = (((y * SS + sy) * big) + (x * SS + sx)) * 4;
-                    let a = hi[i + 3] as u32;
-                    sr += hi[i] as u32 * a;
-                    sg += hi[i + 1] as u32 * a;
-                    sb += hi[i + 2] as u32 * a;
-                    sa += a;
+                    sum += cov[(y * SS + sy) * big + (x * SS + sx)];
                 }
             }
             let o = (y * size + x) * 4;
-            out[o + 3] = (sa / samples) as u8;
-            // Un-premultiply. `checked_div` guards the fully-transparent block.
-            if let Some(r) = sr.checked_div(sa) {
-                out[o] = r as u8;
-                out[o + 1] = (sg / sa) as u8;
-                out[o + 2] = (sb / sa) as u8;
-            }
+            out[o] = color.0 as u8;
+            out[o + 1] = color.1 as u8;
+            out[o + 2] = color.2 as u8;
+            out[o + 3] = (sum / samples * 255.0).round() as u8;
         }
     }
 
@@ -466,17 +412,6 @@ pub(crate) fn export_iconset(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Whether a point lies inside a rounded rectangle.
-fn inside_rounded(px: f32, py: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> bool {
-    if px < x0 || px > x1 || py < y0 || py > y1 {
-        return false;
-    }
-    let cx = px.clamp(x0 + r, x1 - r);
-    let cy = py.clamp(y0 + r, y1 - r);
-    let (dx, dy) = (px - cx, py - cy);
-    dx * dx + dy * dy <= r * r
-}
-
 /// Mark a thick line segment (rounded caps) into a coverage buffer.
 fn stroke(cov: &mut [f32], stride: usize, ax: f32, ay: f32, bx: f32, by: f32, half: f32) {
     let min_x = (ax.min(bx) - half).floor().max(0.0) as usize;
@@ -506,40 +441,3 @@ fn dist_sq_to_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f
     ex * ex + ey * ey
 }
 
-/// Separable box blur, repeated `passes` times to approximate a Gaussian.
-fn box_blur(src: &[f32], stride: usize, radius: usize, passes: usize) -> Vec<f32> {
-    let rows = src.len() / stride;
-    let mut buf = src.to_vec();
-    let mut tmp = vec![0f32; src.len()];
-    let window = (radius * 2 + 1) as f32;
-    for _ in 0..passes {
-        // Horizontal — sliding window sum (O(width) per row, radius-independent).
-        for y in 0..rows {
-            let base = y * stride;
-            let mut sum: f32 = (0..=radius.min(stride - 1)).map(|k| buf[base + k]).sum();
-            for x in 0..stride {
-                tmp[base + x] = sum / window;
-                if let Some(add) = (x + radius + 1 < stride).then_some(x + radius + 1) {
-                    sum += buf[base + add];
-                }
-                if x >= radius {
-                    sum -= buf[base + x - radius];
-                }
-            }
-        }
-        // Vertical.
-        for x in 0..stride {
-            let mut sum: f32 = (0..=radius.min(rows - 1)).map(|k| tmp[k * stride + x]).sum();
-            for y in 0..rows {
-                buf[y * stride + x] = sum / window;
-                if y + radius + 1 < rows {
-                    sum += tmp[(y + radius + 1) * stride + x];
-                }
-                if y >= radius {
-                    sum -= tmp[(y - radius) * stride + x];
-                }
-            }
-        }
-    }
-    buf
-}

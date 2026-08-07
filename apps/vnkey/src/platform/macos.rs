@@ -41,6 +41,12 @@ const SYNTHETIC_MARKER: i64 = 0x0056_4E4B_4559;
 
 /// Virtual key code for the Delete (Backspace) key.
 const VK_DELETE: u16 = 0x33;
+/// Return, Tab, Escape and keypad-Enter — handled by keycode, before the
+/// character path.
+const VK_RETURN: u16 = 0x24;
+const VK_TAB: u16 = 0x30;
+const VK_ESC: u16 = 0x35;
+const VK_KP_ENTER: u16 = 0x4C;
 
 // CGEventType raw values (passed to the tap callback as a u32).
 const ET_LEFT_MOUSE_DOWN: u32 = 1;
@@ -83,6 +89,17 @@ extern "C" {
 extern "C" {
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
+}
+
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    /// Whether any process holds Secure Event Input (HIToolbox).
+    fn IsSecureEventInputEnabled() -> bool;
+}
+
+/// See [`super::secure_input_active`]. Safe to poll.
+pub(super) fn secure_input_active() -> bool {
+    unsafe { IsSecureEventInputEnabled() }
 }
 
 extern "C" {
@@ -254,6 +271,30 @@ unsafe extern "C" fn tap_callback(
         }
         // Injection unavailable: the native Backspace still deletes one
         // displayed character, which is exactly what the engine recorded.
+        return event;
+    }
+
+    // Esc restores the raw keystrokes of the word being composed ("đấy" →
+    // "ddaays") and is consumed by that; with nothing to restore it is the
+    // app's Esc as usual (and a word boundary).
+    if keycode == VK_ESC {
+        let actions = state::restore_raw();
+        if !actions.is_empty() && inject(proxy, &actions) {
+            return ptr::null_mut();
+        }
+        state::reset();
+        return event;
+    }
+
+    // Enter and Tab commit the word (so macros expand) but always pass
+    // through — the app needs the key itself. CGEventTapPostEvent puts the
+    // expansion into the stream *before* the returned event, so the edit
+    // lands ahead of the Enter/Tab.
+    if matches!(keycode, VK_RETURN | VK_KP_ENTER | VK_TAB) {
+        let actions = state::commit_word();
+        if !actions.is_empty() {
+            let _ = inject(proxy, &actions);
+        }
         return event;
     }
 
@@ -469,8 +510,16 @@ fn inject(proxy: CGEventTapProxy, actions: &[EditAction]) -> bool {
         }
     }
 
+    // "Slow typing" compatibility: a small pause between events for apps
+    // that drop rapid synthetic bursts. Only for apps the user listed, and
+    // short enough that even a long rewrite stays far under the event-tap
+    // watchdog (~8 events × 3 ms).
+    let pause = state::slow_typing_here().then(|| std::time::Duration::from_millis(3));
     for ev in &events {
         unsafe { CGEventTapPostEvent(proxy, ev.as_ptr() as CGEventRefRaw) };
+        if let Some(pause) = pause {
+            std::thread::sleep(pause);
+        }
     }
     true
 }

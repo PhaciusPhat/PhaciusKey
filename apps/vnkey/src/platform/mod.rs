@@ -55,6 +55,22 @@ pub fn installed_apps() -> Vec<String> {
     }
 }
 
+/// Whether some process currently holds Secure Event Input (a focused
+/// password field, some terminals). While it does, no event tap sees
+/// keystrokes, so Vietnamese typing silently runs raw — the tray surfaces
+/// this instead of leaving the user to wonder. Always false where the
+/// concept doesn't exist.
+pub fn secure_input_active() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        macos::secure_input_active()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 /// Whether the process currently holds the permission needed to intercept
 /// keystrokes. Never prompts — safe to poll. Always true where none is needed.
 pub fn permission_granted() -> bool {

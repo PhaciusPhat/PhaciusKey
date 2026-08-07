@@ -70,6 +70,31 @@ pub fn backspace() -> Vec<EditAction> {
     with(|s| s.engine.backspace()).unwrap_or_default()
 }
 
+/// Esc: put the raw keystrokes of the current word back on screen. Empty
+/// means nothing to restore — treat the Esc as the app's.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn restore_raw() -> Vec<EditAction> {
+    with(|s| s.engine.restore_raw()).unwrap_or_default()
+}
+
+/// Commit the current word without a boundary character (Enter/Tab), so a
+/// macro still expands there.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn commit_word() -> Vec<EditAction> {
+    with(|s| s.engine.commit_word()).unwrap_or_default()
+}
+
+/// Whether injection should pause between events for the app currently
+/// receiving keystrokes (the user listed it under `slow_apps`).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn slow_typing_here() -> bool {
+    with(|s| match &s.current_app {
+        Some(app) => s.settings.slow_apps.iter().any(|a| a.eq_ignore_ascii_case(app)),
+        None => false,
+    })
+    .unwrap_or(false)
+}
+
 /// Reset the composition buffer (mouse click / focus change).
 // Only wired up on macOS today; the Windows scaffold will call it once it grows
 // a mouse hook.

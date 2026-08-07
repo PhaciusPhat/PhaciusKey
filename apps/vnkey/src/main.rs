@@ -134,6 +134,7 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 }
                 announce_completed_update();
                 spawn_update_check(proxy.clone());
+                spawn_secure_input_watch(proxy.clone());
                 // Dev smoke flag: open the settings window immediately, so the
                 // webview path can be exercised without clicking the tray.
                 if std::env::args().any(|a| a == "--settings-window") {
@@ -283,6 +284,24 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             };
         }
     })
+}
+
+/// Watch the system's Secure Event Input flag and re-sync the tray when it
+/// flips, so the "Vietnamese paused" warning appears and disappears with the
+/// password field that caused it. Polling is the only public interface; every
+/// 2 s is far below anything noticeable.
+fn spawn_secure_input_watch(proxy: EventLoopProxy<UserEvent>) {
+    std::thread::spawn(move || {
+        let mut was = platform::secure_input_active();
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let now = platform::secure_input_active();
+            if now != was {
+                was = now;
+                let _ = proxy.send_event(UserEvent::StateChanged);
+            }
+        }
+    });
 }
 
 /// Check now, then once a day for the life of the process; a failed check is

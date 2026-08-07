@@ -130,6 +130,13 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
         })
         .collect();
 
+    // BTreeMap keeps the macro list in a stable, sorted order across pushes.
+    let macros: Vec<Value> = s
+        .macros
+        .iter()
+        .map(|(trigger, expansion)| json!({ "trigger": trigger, "expansion": expansion }))
+        .collect();
+
     json!({
         "version": update::CURRENT,
         "enabled": s.enabled,
@@ -144,6 +151,8 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
         "current_app": current_app,
         "apps": apps,
         "installed_apps": installed_apps,
+        "macros": macros,
+        "slow_apps": s.slow_apps,
     })
     .to_string()
 }
@@ -172,6 +181,40 @@ pub fn apply_ipc(msg: &str) {
             state::update(|s| {
                 s.app_modes.clear();
                 s.disabled_apps.clear();
+            });
+        }
+        Some("macro_set") => {
+            let (Some(trigger), Some(expansion)) =
+                (v["trigger"].as_str(), v["expansion"].as_str())
+            else {
+                return;
+            };
+            // A trigger with whitespace could never commit as one word.
+            let trigger = trigger.trim().to_string();
+            if trigger.is_empty() || trigger.contains(char::is_whitespace) {
+                return;
+            }
+            let expansion = expansion.to_string();
+            state::update(move |s| {
+                s.macros.insert(trigger, expansion);
+            });
+        }
+        Some("macro_remove") => {
+            let Some(trigger) = v["trigger"].as_str() else { return };
+            let trigger = trigger.to_string();
+            state::update(move |s| {
+                s.macros.remove(&trigger);
+            });
+        }
+        Some("slow_app") => {
+            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else { return };
+            let name = name.to_string();
+            state::update(move |s| {
+                s.slow_apps.retain(|a| !a.eq_ignore_ascii_case(&name));
+                if on {
+                    s.slow_apps.push(name.clone());
+                    s.slow_apps.sort_by_key(|a| a.to_ascii_lowercase());
+                }
             });
         }
         Some("open_config") => crate::open_config_file(),

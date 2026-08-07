@@ -57,6 +57,13 @@ pub struct Settings {
     ///
     /// [`enabled`]: Settings::enabled
     pub app_modes: BTreeMap<String, bool>,
+    /// Text-expansion macros: word typed → text it becomes at the word
+    /// boundary ("vd" → "ví dụ"). Matched against the on-screen word,
+    /// case-sensitively.
+    pub macros: BTreeMap<String, String>,
+    /// Apps (by name, case-insensitive) that drop rapid synthetic keystrokes —
+    /// injection pauses briefly between events while one of these is focused.
+    pub slow_apps: Vec<String>,
     /// Version that last ran. Compared against the running build at startup to
     /// notice that a self-update happened, so the user can be told.
     pub last_seen_version: Option<String>,
@@ -75,6 +82,8 @@ impl Default for Settings {
             disabled_apps: Vec::new(),
             per_app_mode: false,
             app_modes: BTreeMap::new(),
+            macros: BTreeMap::new(),
+            slow_apps: Vec::new(),
             last_seen_version: None,
         }
     }
@@ -166,6 +175,7 @@ impl Settings {
             },
             enabled: self.vietnamese_on(app),
             auto_restore: self.auto_restore,
+            macros: self.macros.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         }
     }
 }
