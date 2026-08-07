@@ -22,6 +22,9 @@ impl InputMethodProcessor for VniMethod {
 ///   9 → đ (only replaces 'd' at onset)
 pub fn process_vni(raw: &str) -> MethodResult {
     let mut syllable = String::new();
+    // Uppercase flag per `syllable` character; digit keys push `false` and the
+    // in-place diacritic replacements are 1:1, so it stays in step.
+    let mut mask: Vec<bool> = Vec::new();
     let mut tone = Tone::Flat;
     // Set when a digit undid its own tone/diacritic, which makes the word literal
     // text: "đoán" then '1' is "đoan1", not "đoán" with the digit swallowed.
@@ -49,11 +52,13 @@ pub fn process_vni(raw: &str) -> MethodResult {
             };
             if !acts {
                 syllable.push(ch);
+                mask.push(false);
             } else if tone == new_tone && new_tone != Tone::Flat {
                 // Same digit twice: undo the tone and type the digit.
                 tone = Tone::Flat;
                 cancelled = true;
                 syllable.push(ch);
+                mask.push(false);
             } else {
                 tone = new_tone;
             }
@@ -66,24 +71,30 @@ pub fn process_vni(raw: &str) -> MethodResult {
                 if undo_diacritic(&mut syllable, &['â', 'ê', 'ô']) {
                     cancelled = true;
                     syllable.push(ch);
+                    mask.push(false);
                 } else if !apply_circumflex(&mut syllable) {
                     syllable.push(ch);
+                    mask.push(false);
                 }
             }
             '7' => {
                 if undo_diacritic(&mut syllable, &['ư', 'ơ']) {
                     cancelled = true;
                     syllable.push(ch);
+                    mask.push(false);
                 } else if !apply_horn(&mut syllable) {
                     syllable.push(ch);
+                    mask.push(false);
                 }
             }
             '8' => {
                 if undo_diacritic(&mut syllable, &['ă']) {
                     cancelled = true;
                     syllable.push(ch);
+                    mask.push(false);
                 } else if !apply_breve(&mut syllable) {
                     syllable.push(ch);
+                    mask.push(false);
                 }
             }
             '9' => {
@@ -91,12 +102,15 @@ pub fn process_vni(raw: &str) -> MethodResult {
                     syllable.replace_range(..'đ'.len_utf8(), "d");
                     cancelled = true;
                     syllable.push(ch);
+                    mask.push(false);
                 } else if !apply_stroke_d(&mut syllable) {
                     syllable.push(ch);
+                    mask.push(false);
                 }
             }
             _ => {
                 syllable.push(ch.to_lowercase().next().unwrap_or(ch));
+                mask.push(ch.is_uppercase());
             }
         }
     }
@@ -109,6 +123,7 @@ pub fn process_vni(raw: &str) -> MethodResult {
         tone,
         is_foreign: false,
         literal,
+        case_mask: mask,
     }
 }
 

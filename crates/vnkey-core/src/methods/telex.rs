@@ -45,6 +45,10 @@ struct TelexState {
     cancelled: bool,
     /// Raw character buffer (for triple-press detection).
     raw: String,
+    /// Uppercase flag per `syllable` character. Diacritic replacements keep
+    /// the replaced character's flag (the doubling key only enriches what is
+    /// already on screen), so the mask always stays in step with `syllable`.
+    mask: Vec<bool>,
 }
 
 impl TelexState {
@@ -71,6 +75,7 @@ impl TelexState {
                     self.tone_applied = false;
                     self.cancelled = true;
                     self.syllable.push(lower);
+                    self.mask.push(ch.is_uppercase());
                 } else {
                     self.tone = tone;
                     self.tone_applied = tone != Tone::Flat;
@@ -110,7 +115,10 @@ impl TelexState {
                     return;
                 }
                 PairResult::Restore(new_syl) => {
+                    // One character became two ("â" → "aa"): the restored base
+                    // keeps its flag, the newly typed key adds its own.
                     self.syllable = new_syl;
+                    self.mask.push(ch.is_uppercase());
                     self.cancelled = true;
                     return;
                 }
@@ -151,6 +159,7 @@ impl TelexState {
 
         // --- Regular character ---
         self.syllable.push(lower);
+        self.mask.push(ch.is_uppercase());
     }
 
     fn finish(self) -> MethodResult {
@@ -163,6 +172,7 @@ impl TelexState {
             tone: self.tone,
             is_foreign: self.is_foreign,
             literal,
+            case_mask: self.mask,
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::buffer::CompositionBuffer;
-use crate::methods::{InputMethodProcessor, TelexMethod, VniMethod};
+use crate::methods::{apply_case_mask, InputMethodProcessor, TelexMethod, VniMethod};
 use crate::tone_placement::apply_tone;
 use crate::types::{Config, EditAction, InputMethod, Keystroke, Tone};
 use crate::validator::{coda_of, is_valid_prefix, tone_allowed_with_coda};
@@ -137,7 +137,9 @@ impl Engine {
             let text = match &method_result.literal {
                 // A key that undid its own diacritic makes the word literal text,
                 // and the method already dropped the undone mark: "ddd" → "dd".
-                Some(literal) if !was_passthrough && !method_result.is_foreign => literal.clone(),
+                Some(literal) if !was_passthrough && !method_result.is_foreign => {
+                    apply_case_mask(literal, &method_result.case_mask)
+                }
                 _ => raw.clone(),
             };
             return self.buffer.diff_to(&text);
@@ -146,16 +148,17 @@ impl Engine {
         // Still a possible Vietnamese syllable, but a key undid its own diacritic,
         // so show that text verbatim rather than re-applying anything: "aaa" → "aa".
         if let Some(literal) = &method_result.literal {
-            let literal = apply_case(literal, &raw);
+            let literal = apply_case_mask(literal, &method_result.case_mask);
             return self.buffer.diff_to(&literal);
         }
 
         // Apply tone placement to form the target word.
         let target = apply_tone(bare, tone, self.config.placement);
-        // The methods lowercase everything for processing; restore the case the
-        // user actually typed (Shift). Handles the common patterns: a leading
-        // capital ("Xin" → "Xin") and all-caps ("VIET" → "VIẾT").
-        let target = apply_case(&target, &raw);
+        // The methods lowercase letters for matching; the mask restores the
+        // case the user actually typed, per character, so mid-word capitals
+        // survive ("BaN" → "BaN"). Tone placement is 1:1 on characters, so the
+        // mask still lines up after it.
+        let target = apply_case_mask(&target, &method_result.case_mask);
 
         self.buffer.diff_to(&target)
     }
@@ -190,32 +193,6 @@ impl Engine {
     pub fn current_displayed(&self) -> String {
         self.buffer.displayed.clone()
     }
-}
-
-/// Re-apply the case the user typed to a converted (lowercase) syllable.
-///
-/// - All typed letters uppercase → uppercase the whole result (`VIET` → `VIẾT`).
-/// - Otherwise, if the first typed letter was uppercase → capitalize the first
-///   letter of the result (`Xin` → `Xin`, `Has` → `Há`).
-/// - Otherwise leave it lowercase.
-fn apply_case(target: &str, raw: &str) -> String {
-    let letters: Vec<char> = raw.chars().filter(|c| c.is_alphabetic()).collect();
-    if letters.is_empty() {
-        return target.to_string();
-    }
-
-    if letters.len() > 1 && letters.iter().all(|c| c.is_uppercase()) {
-        return target.to_uppercase();
-    }
-
-    if letters[0].is_uppercase() {
-        let mut chars = target.chars();
-        if let Some(first) = chars.next() {
-            return first.to_uppercase().collect::<String>() + chars.as_str();
-        }
-    }
-
-    target.to_string()
 }
 
 fn is_word_boundary(ch: char) -> bool {

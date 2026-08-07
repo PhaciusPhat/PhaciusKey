@@ -19,6 +19,29 @@ pub struct MethodResult {
     /// the word literal text ("aaa" → "aa", VNI "…an11" → "…an1"). `None` means
     /// "echo the raw keystrokes" if this word turns out not to be Vietnamese.
     pub literal: Option<String>,
+    /// Per-character uppercase mask for `bare` (and `literal`, which is the
+    /// same syllable). The methods lowercase letters so matching stays simple;
+    /// this carries the case the user typed, per produced character — which is
+    /// what lets a mid-word capital survive ("BaN" → "BaN", not "Ban").
+    pub case_mask: Vec<bool>,
+}
+
+/// Re-apply a typed-case mask to a composed (lowercase) string. Characters
+/// beyond the mask keep their case; Vietnamese letters uppercase 1:1.
+pub fn apply_case_mask(text: &str, mask: &[bool]) -> String {
+    text.chars()
+        .enumerate()
+        .flat_map(|(i, c)| {
+            let upper = mask.get(i).copied().unwrap_or(false);
+            let mut out = Vec::new();
+            if upper {
+                out.extend(c.to_uppercase());
+            } else {
+                out.push(c);
+            }
+            out
+        })
+        .collect()
 }
 
 pub trait InputMethodProcessor {
