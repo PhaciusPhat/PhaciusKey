@@ -163,15 +163,37 @@ impl Engine {
         self.buffer.diff_to(&target)
     }
 
-    /// Commit the current buffer (validate, then clear) and return diff actions.
-    /// `extra_char` is inserted literally after the commit (e.g. a space).
+    /// Commit the current word without a boundary character. The shell calls
+    /// this for keys it passes through itself (Enter, Tab), so macros still
+    /// expand there; the returned actions land before the passed-through key.
+    pub fn commit_word(&mut self) -> Vec<EditAction> {
+        if !self.config.enabled {
+            return vec![];
+        }
+        self.commit_and_reset(None)
+    }
+
+    /// Commit the current buffer (expand a macro, then clear) and return diff
+    /// actions. `extra_char` is inserted literally after the commit (e.g. a
+    /// space).
     fn commit_and_reset(&mut self, extra_char: Option<char>) -> Vec<EditAction> {
-        // On boundary, we just need to clear internal state; the text already on
-        // screen was kept in sync by recompute(). No extra backspaces needed.
+        let mut actions = vec![];
+
+        // Text expansion: the committed word — exactly as displayed — matches
+        // a macro trigger. u8::MAX guards the Backspace count; triggers are
+        // short in practice.
+        if let Some(expansion) = self.config.macros.get(&self.buffer.displayed) {
+            let shown = self.buffer.displayed.chars().count();
+            if shown > 0 && shown <= u8::MAX as usize && *expansion != self.buffer.displayed {
+                actions.push(EditAction::Backspace(shown as u8));
+                actions.push(EditAction::Insert(expansion.clone()));
+            }
+        }
+
+        // Otherwise the text already on screen was kept in sync by
+        // recompute() — clearing internal state needs no backspaces.
         self.buffer.reset();
         self.passthrough = false;
-
-        let mut actions = vec![];
 
         if let Some(ch) = extra_char {
             if ch != '\0' {
@@ -180,6 +202,27 @@ impl Engine {
         }
 
         actions
+    }
+
+    /// Put the raw keystrokes back on screen (Esc): "đấy" → "ddaays".
+    ///
+    /// The escape hatch for when composition guessed wrong. The word then
+    /// stays literal until the next boundary — restoring it just to have the
+    /// next key re-compose it would defeat the point.
+    ///
+    /// An empty vec means there is nothing to restore (not composing, or the
+    /// screen already shows the raw keys) — the caller should treat the
+    /// keystroke as not ours and pass it through.
+    pub fn restore_raw(&mut self) -> Vec<EditAction> {
+        if !self.config.enabled || self.buffer.raw.is_empty() {
+            return vec![];
+        }
+        if self.buffer.displayed == self.buffer.raw {
+            return vec![];
+        }
+        let raw = self.buffer.raw.clone();
+        self.passthrough = true;
+        self.buffer.diff_to(&raw)
     }
 
     /// Force-reset the buffer (e.g. on mouse click / focus change).
