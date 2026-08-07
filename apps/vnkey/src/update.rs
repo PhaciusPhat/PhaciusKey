@@ -40,8 +40,11 @@ pub fn new_issue_url() -> String {
 /// than the daily cadence, because the launch check routinely races Wi-Fi/VPN
 /// coming up at login. Blocking; run off the main thread.
 ///
-/// Uses the releases *list* rather than `/releases/latest`, because our releases
-/// are marked pre-release and `/releases/latest` only returns full releases.
+/// Reads the public `releases.atom` feed rather than the REST API: the
+/// unauthenticated API allows 60 requests/hour **per IP**, and users behind a
+/// shared egress (Cloudflare WARP, corporate NAT — common in Vietnam) found it
+/// permanently exhausted ("not a release list"). The feed is uncapped, and —
+/// unlike `/releases/latest` — includes prereleases, which our releases are.
 pub fn check_for_newer() -> Result<Option<String>, String> {
     let output = std::process::Command::new("curl")
         .args([
@@ -50,31 +53,36 @@ pub fn check_for_newer() -> Result<Option<String>, String> {
             "8",
             "-H",
             "User-Agent: PhaciusKey",
-            "-H",
-            "Accept: application/vnd.github+json",
-            &format!("https://api.github.com/repos/{REPO}/releases?per_page=10"),
+            &format!("https://github.com/{REPO}/releases.atom"),
         ])
         .output()
         .map_err(|e| format!("curl: {e}"))?;
     if !output.status.success() {
         return Err(format!("curl exited with {}", output.status));
     }
-    let releases: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("unexpected response from GitHub: {e}"))?;
 
-    // Highest version across all (non-draft) releases. An empty or non-array
-    // body (e.g. a rate-limit error object) counts as a failed check, not as
-    // "up to date".
-    let newest = releases
-        .as_array()
-        .ok_or("unexpected response from GitHub: not a release list")?
-        .iter()
-        .filter(|r| !r.get("draft").and_then(|d| d.as_bool()).unwrap_or(false))
-        .filter_map(|r| r.get("tag_name")?.as_str())
-        .map(|tag| tag.trim_start_matches('v').to_string())
-        .max_by_key(|v| parse(v));
+    let body = String::from_utf8_lossy(&output.stdout);
+    let newest = newest_version_in_atom(&body)
+        .ok_or("unexpected response from GitHub: no release tags in the feed")?;
 
-    Ok(newest.filter(|v| is_newer(v, CURRENT)))
+    Ok(Some(newest).filter(|v| is_newer(v, CURRENT)))
+}
+
+/// Highest `vX.Y.Z` across the feed's `…/releases/tag/v…` references. `None`
+/// when the body carries no tags at all (an error page, an empty feed) — a
+/// failed check, never "up to date". Draft releases are unpublished and never
+/// appear in the feed, so no draft filter is needed.
+fn newest_version_in_atom(body: &str) -> Option<String> {
+    const MARKER: &str = "/releases/tag/v";
+    body.match_indices(MARKER)
+        .map(|(i, _)| {
+            body[i + MARKER.len()..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect::<String>()
+        })
+        .filter(|v| !v.is_empty())
+        .max_by_key(|v| parse(v))
 }
 
 /// Open a URL in the user's default browser.
@@ -123,6 +131,32 @@ fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_newest_version_in_an_atom_feed() {
+        let feed = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <id>tag:github.com,2008:Repository/1/v0.0.9</id>
+            <link rel="alternate" href="https://github.com/x/y/releases/tag/v0.0.9"/>
+          </entry>
+          <entry>
+            <id>tag:github.com,2008:Repository/1/v0.0.20</id>
+            <link rel="alternate" href="https://github.com/x/y/releases/tag/v0.0.20"/>
+          </entry>
+        </feed>"#;
+        assert_eq!(newest_version_in_atom(feed), Some("0.0.20".to_string()));
+    }
+
+    #[test]
+    fn rejects_bodies_without_release_tags() {
+        // The exact failure that motivated the atom switch: a rate-limit JSON
+        // object from the REST API. Any tagless body must read as a failed
+        // check, never as "up to date".
+        assert_eq!(newest_version_in_atom(r#"{"message":"API rate limit exceeded"}"#), None);
+        assert_eq!(newest_version_in_atom(""), None);
+        assert_eq!(newest_version_in_atom("<feed></feed>"), None);
+    }
 
     #[test]
     fn version_ordering() {
