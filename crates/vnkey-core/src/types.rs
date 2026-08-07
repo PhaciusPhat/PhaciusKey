@@ -41,6 +41,9 @@ pub struct Config {
     pub enabled: bool,
     /// When false, invalid sequences are passed through literally (no diacritics forced).
     pub auto_restore: bool,
+    /// Text-expansion macros: an on-screen word matching a key exactly
+    /// (case-sensitive) is replaced with its value when the word commits.
+    pub macros: std::collections::HashMap<String, String>,
 }
 
 impl Default for Config {
@@ -50,6 +53,7 @@ impl Default for Config {
             placement: TonePlacementMode::Modern,
             enabled: true,
             auto_restore: true,
+            macros: std::collections::HashMap::new(),
         }
     }
 }

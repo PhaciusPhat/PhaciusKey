@@ -11,6 +11,7 @@ fn engine(method: InputMethod) -> Engine {
         placement: TonePlacementMode::Modern,
         enabled: true,
         auto_restore: true,
+        ..Default::default()
     })
 }
 

@@ -14,6 +14,7 @@ fn typed(seq: &str, method: InputMethod, placement: TonePlacementMode) -> String
         placement,
         enabled: true,
         auto_restore: true,
+        ..Default::default()
     });
     for ch in seq.chars() {
         engine.process(Keystroke::char(ch));
@@ -153,6 +154,7 @@ fn passthrough_resets_at_a_word_boundary() {
         placement: TonePlacementMode::Modern,
         enabled: true,
         auto_restore: true,
+        ..Default::default()
     });
     for ch in "jira ".chars() {
         engine.process(Keystroke::char(ch));
@@ -179,6 +181,7 @@ fn screen(seq: &str, backspaces_at_end: usize) -> String {
         placement: TonePlacementMode::Modern,
         enabled: true,
         auto_restore: true,
+        ..Default::default()
     });
     let mut out = String::new();
 
@@ -247,6 +250,7 @@ fn screen_vni(seq: &str) -> String {
         placement: TonePlacementMode::Modern,
         enabled: true,
         auto_restore: true,
+        ..Default::default()
     });
     let mut out = String::new();
     for ch in seq.chars() {
