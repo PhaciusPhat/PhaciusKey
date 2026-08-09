@@ -137,7 +137,7 @@ pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
             shift,
             meta,
         } => {
-            if let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, &code) {
+            if let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, Some(&code)) {
                 state::update(move |s| s.toggle_shortcut = shortcut);
             }
         }

@@ -268,7 +268,7 @@ fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
     let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
         return false;
     };
-    let Some(want) = keycode_for(sc.key) else {
+    let Some(want) = sc.key.and_then(keycode_for) else {
         return false;
     };
     if keycode != want {

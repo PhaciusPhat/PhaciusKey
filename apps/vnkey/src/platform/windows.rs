@@ -184,7 +184,7 @@ fn is_toggle_shortcut(vk: u16) -> bool {
     let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
         return false;
     };
-    if config::windows_vk(sc.key) != Some(vk) {
+    if sc.key.and_then(config::windows_vk) != Some(vk) {
         return false;
     }
     down(VK_CONTROL) == sc.ctrl
