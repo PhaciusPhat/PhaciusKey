@@ -17,6 +17,21 @@ pub fn request_permission() {
     macos::request_accessibility_permission(true);
 }
 
+/// Our own application name, as the keyboard hook would report it.
+pub fn self_app_name() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    if let Some(path) = exe.to_str() {
+        for component in path.split('/') {
+            if let Some(name) = component.strip_suffix(".app") {
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    exe.file_stem()?.to_str().map(str::to_string)
+}
+
 pub fn installed_apps() -> Vec<String> {
     #[cfg(target_os = "macos")]
     {

@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::sync::Mutex;
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tao::dpi::LogicalSize;
 use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
@@ -8,8 +9,8 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::WebView;
 
 use crate::config::{
-    macro_export_json, merge_macros, parse_macro_export, parse_shortcut, shortcut_display,
-    shortcut_from_event, valid_macro_trigger, Method, Placement, Settings,
+    macro_export_json, merge_macros, parse_macro_export, parse_shortcut, shortcut_from_event,
+    shortcut_parts, valid_macro_trigger, Method, Placement, Settings,
 };
 use crate::{autostart, platform, state, update, UserEvent};
 
@@ -87,39 +88,19 @@ impl SettingsWindow {
     }
 }
 
-fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]) -> String {
-    let mut names: Vec<String> = Vec::new();
-    let mut add = |name: &str| {
-        if !names.iter().any(|n| n.eq_ignore_ascii_case(name)) {
-            names.push(name.to_string());
-        }
-    };
-    for app in state::seen_apps() {
-        add(&app);
-    }
-    if let Some(app) = current_app {
-        add(app);
-    }
-    for app in &s.disabled_apps {
-        add(app);
-    }
-    for app in s.app_modes.keys() {
-        add(app);
-    }
+/// Everything the app-name fields offer as suggestions: what is installed,
+/// plus anything typed in during this session, which catches binaries that
+/// live outside the usual application folders.
+fn suggestions(installed_apps: &[String], current_app: Option<&str>) -> Vec<String> {
+    let mut names = installed_apps.to_vec();
+    names.extend(state::seen_apps());
+    names.extend(current_app.map(str::to_string));
     names.sort_by_key(|n| n.to_ascii_lowercase());
+    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    names
+}
 
-    let apps: Vec<Value> = names
-        .iter()
-        .map(|name| {
-            let on = if s.per_app_mode {
-                s.vietnamese_on(Some(name))
-            } else {
-                !s.disabled_for(Some(name))
-            };
-            json!({ "name": name, "on": on })
-        })
-        .collect();
-
+fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]) -> String {
     let macros: Vec<Value> = s
         .macros
         .iter()
@@ -139,14 +120,13 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
         "auto_capitalize": s.auto_capitalize,
         "auto_update": s.auto_update,
         "start_at_login": autostart::effective(s.start_at_login),
-        "per_app_mode": s.per_app_mode,
         "toggle_shortcut": s.toggle_shortcut,
-        "shortcut_display": shortcut_display(&s.toggle_shortcut),
+        "shortcut_parts": shortcut_parts(&s.toggle_shortcut),
         "shortcut_valid": parse_shortcut(&s.toggle_shortcut).is_some(),
         "macros_enabled": s.macros_enabled,
         "current_app": current_app,
-        "apps": apps,
-        "installed_apps": installed_apps,
+        "excluded_apps": s.disabled_apps,
+        "suggestions": suggestions(installed_apps, current_app),
         "macros": macros,
         "slow_apps": s.slow_apps,
         "autocomplete_fix_apps": s.autocomplete_fix_apps,
@@ -155,112 +135,115 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
     .to_string()
 }
 
+/// The wire format the page speaks. Deserialising into a tagged enum, rather
+/// than reading fields off a `Value` by hand, is what makes a mistyped or
+/// shadowed field an error instead of a silently ignored message.
+#[derive(Debug, PartialEq, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
+enum Cmd {
+    Init,
+    Set {
+        key: String,
+        value: Value,
+    },
+    Exclude {
+        name: String,
+        on: bool,
+    },
+    ForgetApps,
+    MacroSet {
+        trigger: String,
+        expansion: String,
+    },
+    MacroRemove {
+        trigger: String,
+    },
+    SlowApp {
+        name: String,
+        on: bool,
+    },
+    AutocompleteApp {
+        name: String,
+        on: bool,
+    },
+    ShortcutRecord {
+        on: bool,
+    },
+    ShortcutCapture {
+        code: String,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        meta: bool,
+    },
+    MacrosExport,
+    MacrosImport {
+        text: String,
+    },
+    OpenConfig,
+}
+
 pub fn apply_ipc(msg: &str) {
-    let Ok(v) = serde_json::from_str::<Value>(msg) else {
-        return;
+    let cmd = match serde_json::from_str::<Cmd>(msg) {
+        Ok(cmd) => cmd,
+        Err(e) => return eprintln!("[vnkey] ignoring settings message ({e}): {msg}"),
     };
-    match v["cmd"].as_str() {
-        Some("init") => {}
-        Some("set") => apply_set(&v),
-        Some("app") => {
-            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else {
-                return;
-            };
-            let name = name.to_string();
-            state::update(move |s| set_app_on(s, &name, on));
+
+    match cmd {
+        Cmd::Init => {}
+        Cmd::Set { key, value } => apply_set(&key, &value),
+        Cmd::Exclude { name, on } => {
+            state::update(move |s| s.set_excluded(&name, on));
         }
-        Some("app_remove") => {
-            let Some(name) = v["name"].as_str() else {
-                return;
-            };
-            let name = name.to_string();
-            state::update(move |s| {
-                s.app_modes.remove(&name.to_ascii_lowercase());
-                s.disabled_apps.retain(|d| !d.eq_ignore_ascii_case(&name));
-            });
+        Cmd::ForgetApps => {
+            state::update(|s| s.disabled_apps.clear());
         }
-        Some("forget_apps") => {
-            state::update(|s| {
-                s.app_modes.clear();
-                s.disabled_apps.clear();
-            });
-        }
-        Some("macro_set") => {
-            let (Some(trigger), Some(expansion)) = (v["trigger"].as_str(), v["expansion"].as_str())
-            else {
-                return;
-            };
+        Cmd::MacroSet { trigger, expansion } => {
             let trigger = trigger.trim().to_string();
-            if !valid_macro_trigger(&trigger) {
-                return;
+            if valid_macro_trigger(&trigger) {
+                state::update(move |s| {
+                    s.macros.insert(trigger, expansion);
+                });
             }
-            let expansion = expansion.to_string();
-            state::update(move |s| {
-                s.macros.insert(trigger, expansion);
-            });
         }
-        Some("macro_remove") => {
-            let Some(trigger) = v["trigger"].as_str() else {
-                return;
-            };
-            let trigger = trigger.to_string();
+        Cmd::MacroRemove { trigger } => {
             state::update(move |s| {
                 s.macros.remove(&trigger);
             });
         }
-        Some("slow_app") => {
-            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else {
-                return;
-            };
-            let name = name.to_string();
-            state::update(move |s| {
-                s.slow_apps.retain(|a| !a.eq_ignore_ascii_case(&name));
-                if on {
-                    s.slow_apps.push(name.clone());
-                    s.slow_apps.sort_by_key(|a| a.to_ascii_lowercase());
-                }
-            });
+        Cmd::SlowApp { name, on } => {
+            state::update(move |s| set_listed(&mut s.slow_apps, &name, on));
         }
-        Some("autocomplete_app") => {
-            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else {
-                return;
-            };
-            let name = name.to_string();
-            state::update(move |s| {
-                s.autocomplete_fix_apps
-                    .retain(|a| !a.eq_ignore_ascii_case(&name));
-                if on {
-                    s.autocomplete_fix_apps.push(name.clone());
-                    s.autocomplete_fix_apps
-                        .sort_by_key(|a| a.to_ascii_lowercase());
-                }
-            });
+        Cmd::AutocompleteApp { name, on } => {
+            state::update(move |s| set_listed(&mut s.autocomplete_fix_apps, &name, on));
         }
-        Some("shortcut_record") => {
-            let Some(on) = v["on"].as_bool() else { return };
-            state::set_shortcut_recording(on);
-        }
-        Some("shortcut_capture") => {
-            let code = v["code"].as_str().unwrap_or_default();
-            let held = |name: &str| v[name].as_bool().unwrap_or(false);
-            let Some(shortcut) =
-                shortcut_from_event(held("ctrl"), held("alt"), held("shift"), held("cmd"), code)
-            else {
+        Cmd::ShortcutRecord { on } => state::set_shortcut_recording(on),
+        Cmd::ShortcutCapture {
+            code,
+            ctrl,
+            alt,
+            shift,
+            meta,
+        } => {
+            let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, &code) else {
                 return;
             };
             state::update(move |s| s.toggle_shortcut = shortcut);
         }
-        Some("macros_export") => export_macros(),
-        Some("macros_import") => {
-            let Some(text) = v["text"].as_str() else {
-                return;
-            };
-            import_macros(text);
-        }
-        Some("open_config") => crate::open_config_file(),
-        _ => {}
+        Cmd::MacrosExport => export_macros(),
+        Cmd::MacrosImport { text } => import_macros(&text),
+        Cmd::OpenConfig => crate::open_config_file(),
     }
 }
+
+fn set_listed(list: &mut Vec<String>, name: &str, on: bool) {
+    list.retain(|a| !a.eq_ignore_ascii_case(name));
+    if on {
+        list.push(name.to_string());
+        list.sort_by_key(|a| a.to_ascii_lowercase());
+    }
+}
+
 
 fn export_macros() {
     let settings = state::settings();
@@ -337,70 +320,147 @@ fn plural_y(n: usize) -> &'static str {
     }
 }
 
-fn apply_set(v: &Value) {
-    let Some(key) = v["key"].as_str() else { return };
-    match key {
-        "enabled"
-        | "auto_restore"
-        | "auto_update"
-        | "per_app_mode"
-        | "start_at_login"
-        | "standalone_w"
-        | "quick_telex"
-        | "quick_start_consonant"
-        | "quick_end_consonant"
-        | "auto_capitalize"
-        | "macros_enabled" => {
-            let Some(on) = v["value"].as_bool() else {
-                return;
-            };
-            let key = key.to_string();
-            let updated = state::update(|s| match key.as_str() {
-                "enabled" => s.enabled = on,
-                "auto_restore" => s.auto_restore = on,
-                "auto_update" => s.auto_update = on,
-                "per_app_mode" => s.per_app_mode = on,
-                "start_at_login" => s.start_at_login = on,
-                "standalone_w" => s.standalone_w = on,
-                "quick_telex" => s.quick_telex = on,
-                "quick_start_consonant" => s.quick_start_consonant = on,
-                "quick_end_consonant" => s.quick_end_consonant = on,
-                "auto_capitalize" => s.auto_capitalize = on,
-                "macros_enabled" => s.macros_enabled = on,
-                _ => unreachable!(),
-            });
-            if key == "start_at_login" {
-                autostart::apply(updated.start_at_login);
-            }
-        }
-        "method" => {
-            let method = match v["value"].as_str() {
-                Some("telex") => Method::Telex,
-                Some("vni") => Method::Vni,
-                _ => return,
-            };
-            state::update(move |s| s.method = method);
-        }
-        "placement" => {
-            let placement = match v["value"].as_str() {
-                Some("modern") => Placement::Modern,
-                Some("classic") => Placement::Classic,
-                _ => return,
-            };
-            state::update(move |s| s.placement = placement);
-        }
+fn apply_set(key: &str, value: &Value) {
+    let toggle: Option<fn(&mut Settings, bool)> = match key {
+        "enabled" => Some(|s, on| s.enabled = on),
+        "auto_restore" => Some(|s, on| s.auto_restore = on),
+        "auto_update" => Some(|s, on| s.auto_update = on),
+        "start_at_login" => Some(|s, on| s.start_at_login = on),
+        "standalone_w" => Some(|s, on| s.standalone_w = on),
+        "quick_telex" => Some(|s, on| s.quick_telex = on),
+        "quick_start_consonant" => Some(|s, on| s.quick_start_consonant = on),
+        "quick_end_consonant" => Some(|s, on| s.quick_end_consonant = on),
+        "auto_capitalize" => Some(|s, on| s.auto_capitalize = on),
+        "macros_enabled" => Some(|s, on| s.macros_enabled = on),
+        _ => None,
+    };
 
-        _ => {}
+    if let Some(set) = toggle {
+        let Some(on) = value.as_bool() else { return };
+        let updated = state::update(|s| set(s, on));
+        if key == "start_at_login" {
+            autostart::apply(updated.start_at_login);
+        }
+        return;
     }
+
+    match (key, value.as_str()) {
+        ("method", Some("telex")) => state::update(|s| s.method = Method::Telex),
+        ("method", Some("vni")) => state::update(|s| s.method = Method::Vni),
+        ("placement", Some("modern")) => state::update(|s| s.placement = Placement::Modern),
+        ("placement", Some("classic")) => state::update(|s| s.placement = Placement::Classic),
+        _ => return,
+    };
 }
 
-fn set_app_on(s: &mut Settings, app: &str, on: bool) {
-    if on {
-        s.set_app_mode(app, true);
-    } else {
-        s.app_modes.insert(app.to_ascii_lowercase(), false);
-        if !s.disabled_for(Some(app)) {
-            s.disabled_apps.push(app.to_string());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(msg: &str) -> Cmd {
+        serde_json::from_str(msg).unwrap()
+    }
+
+    #[test]
+    fn a_recorded_combination_carries_every_modifier() {
+        assert_eq!(
+            parse(
+                r#"{"cmd":"shortcut_capture","code":"KeyV","ctrl":true,
+                    "alt":false,"shift":true,"meta":false}"#
+            ),
+            Cmd::ShortcutCapture {
+                code: "KeyV".to_string(),
+                ctrl: true,
+                alt: false,
+                shift: true,
+                meta: false,
+            }
+        );
+    }
+
+    /// The command name used to share a key with the ⌘ modifier, so the page
+    /// sent `{"cmd":false,…}` and every capture was discarded unread.
+    #[test]
+    fn a_modifier_cannot_shadow_the_command_name() {
+        let shadowed = r#"{"cmd":"shortcut_capture","code":"KeyV","ctrl":true,
+                           "alt":false,"shift":true,"cmd":false}"#;
+        assert!(serde_json::from_str::<Cmd>(shadowed).is_err());
+    }
+
+    #[test]
+    fn every_command_the_page_sends_is_understood() {
+        for msg in [
+            r#"{"cmd":"init"}"#,
+            r#"{"cmd":"set","key":"enabled","value":true}"#,
+            r#"{"cmd":"set","key":"method","value":"telex"}"#,
+            r#"{"cmd":"exclude","name":"Safari","on":true}"#,
+            r#"{"cmd":"forget_apps"}"#,
+            r#"{"cmd":"macro_set","trigger":"vd","expansion":"ví dụ"}"#,
+            r#"{"cmd":"macro_remove","trigger":"vd"}"#,
+            r#"{"cmd":"slow_app","name":"IntelliJ IDEA","on":true}"#,
+            r#"{"cmd":"autocomplete_app","name":"Safari","on":false}"#,
+            r#"{"cmd":"shortcut_record","on":true}"#,
+            r#"{"cmd":"macros_export"}"#,
+            r#"{"cmd":"macros_import","text":"{}"}"#,
+            r#"{"cmd":"open_config"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<Cmd>(msg).is_ok(),
+                "should parse: {msg}"
+            );
         }
+    }
+
+    #[test]
+    fn a_message_that_is_not_a_command_is_refused() {
+        assert!(serde_json::from_str::<Cmd>(r#"{"cmd":"nonsense"}"#).is_err());
+        assert!(serde_json::from_str::<Cmd>(r#"{"cmd":"exclude"}"#).is_err());
+        assert!(serde_json::from_str::<Cmd>("not json").is_err());
+    }
+
+    /// `$("missing")` returns null and the next property access throws, which
+    /// aborts the whole script and leaves every control on the page inert.
+    #[test]
+    fn every_element_the_page_looks_up_exists_in_the_markup() {
+        let ids: Vec<&str> = HTML
+            .match_indices("id=\"")
+            .filter_map(|(at, _)| HTML[at + 4..].split('"').next())
+            .collect();
+
+        let looked_up = HTML
+            .match_indices("$(\"")
+            .filter_map(|(at, _)| HTML[at + 3..].split('"').next());
+
+        for id in looked_up {
+            assert!(ids.contains(&id), "the page looks up #{id}, which is gone");
+        }
+    }
+
+    /// Every switch reports a settings key the state payload also carries.
+    #[test]
+    fn every_switch_binds_to_a_key_the_payload_sends() {
+        let payload = state_json(&Settings::default(), None, &[]);
+        let payload: Value = serde_json::from_str(&payload).unwrap();
+
+        let keys = HTML
+            .match_indices("data-key=\"")
+            .filter_map(|(at, _)| HTML[at + 10..].split('"').next());
+
+        for key in keys {
+            assert!(payload.get(key).is_some(), "no state is pushed for {key}");
+        }
+    }
+
+    #[test]
+    fn listing_an_app_is_idempotent_and_case_insensitive() {
+        let mut list = vec!["Safari".to_string()];
+        set_listed(&mut list, "safari", true);
+        assert_eq!(list, ["safari"]);
+
+        set_listed(&mut list, "Notes", true);
+        assert_eq!(list, ["Notes", "safari"]);
+
+        set_listed(&mut list, "SAFARI", false);
+        assert_eq!(list, ["Notes"]);
     }
 }

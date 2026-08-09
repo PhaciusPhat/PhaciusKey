@@ -175,9 +175,13 @@ unsafe extern "C" fn tap_callback(
 
     let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
 
+    // Typing into our own settings window must not file PhaciusKey into the
+    // very list of applications the user is curating there.
     let pid = cg.get_integer_value_field(EventField::EVENT_TARGET_UNIX_PROCESS_ID);
-    if let Some(name) = app_name_for_pid(pid) {
-        state::set_current_app(&name);
+    if pid != i64::from(std::process::id()) {
+        if let Some(name) = app_name_for_pid(pid) {
+            state::set_current_app(&name);
+        }
     }
 
     if is_toggle_shortcut(keycode, cg.get_flags())

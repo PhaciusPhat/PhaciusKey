@@ -48,7 +48,7 @@ fn main() {
         return;
     }
 
-    let mut settings = Settings::load();
+    let mut settings = Settings::load(platform::self_app_name().as_deref());
 
     if autostart::migrate_legacy_launch_agent() && settings.start_at_login {
         autostart::apply(true);
@@ -349,22 +349,6 @@ fn handle_menu_event(
 
     let updated = if id == tray.toggle.id() {
         state::toggle_vietnamese()
-    } else if id == tray.app_toggle.id() {
-        let Some(app) = state::current_app() else {
-            return;
-        };
-        state::update(|s| {
-            if s.per_app_mode {
-                let now = s.vietnamese_on(Some(&app));
-                s.set_app_mode(&app, !now);
-            } else if s.disabled_for(Some(&app)) {
-                s.disabled_apps.retain(|d| !d.eq_ignore_ascii_case(&app));
-            } else {
-                s.disabled_apps.push(app.clone());
-            }
-        })
-    } else if id == tray.per_app.id() {
-        state::update(|s| s.per_app_mode = !s.per_app_mode)
     } else if id == tray.telex.id() {
         state::update(|s| s.method = Method::Telex)
     } else if id == tray.vni.id() {

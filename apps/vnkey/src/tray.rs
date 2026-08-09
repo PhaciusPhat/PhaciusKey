@@ -14,8 +14,6 @@ pub struct Tray {
     tray: TrayIcon,
     status: MenuItem,
     pub toggle: CheckMenuItem,
-    pub app_toggle: CheckMenuItem,
-    pub per_app: CheckMenuItem,
     method_menu: Submenu,
     tone_menu: Submenu,
     pub telex: CheckMenuItem,
@@ -39,9 +37,6 @@ impl Tray {
 
         let accel = parse_shortcut(&settings.toggle_shortcut).and_then(accelerator_for);
         let toggle = CheckMenuItem::new("Vietnamese typing", true, settings.enabled, accel);
-        let app_toggle = CheckMenuItem::new("Enable in current app", false, true, None);
-        let per_app =
-            CheckMenuItem::new("Remember on/off per app", true, settings.per_app_mode, None);
 
         let telex = CheckMenuItem::new("Telex", true, settings.method == Method::Telex, None);
         let vni = CheckMenuItem::new("VNI", true, settings.method == Method::Vni, None);
@@ -111,8 +106,6 @@ impl Tray {
             &status,
             &sep(),
             &toggle,
-            &app_toggle,
-            &per_app,
             &sep(),
             &method_menu,
             &tone_menu,
@@ -138,8 +131,6 @@ impl Tray {
             tray,
             status,
             toggle,
-            app_toggle,
-            per_app,
             method_menu,
             tone_menu,
             telex,
@@ -183,12 +174,7 @@ impl Tray {
     pub fn refresh(&self, settings: &Settings, current_app: Option<&str>) {
         let effective = settings.vietnamese_on(current_app);
 
-        self.toggle.set_checked(if settings.per_app_mode {
-            effective
-        } else {
-            settings.enabled
-        });
-        self.per_app.set_checked(settings.per_app_mode);
+        self.toggle.set_checked(settings.enabled);
 
         let status = if crate::platform::secure_input_active() {
             "⚠ Secure input on — Vietnamese paused (password field?)".to_string()
@@ -205,23 +191,6 @@ impl Tray {
         let _ = self
             .tray
             .set_tooltip(Some(format!("PhaciusKey — {status}")));
-
-        match current_app {
-            Some(app) => {
-                self.app_toggle.set_text(format!("Enable in {app}"));
-                self.app_toggle.set_enabled(true);
-                self.app_toggle.set_checked(if settings.per_app_mode {
-                    effective
-                } else {
-                    !settings.disabled_for(Some(app))
-                });
-            }
-            None => {
-                self.app_toggle.set_text("Enable in current app");
-                self.app_toggle.set_enabled(false);
-                self.app_toggle.set_checked(true);
-            }
-        }
 
         let _ = self
             .toggle

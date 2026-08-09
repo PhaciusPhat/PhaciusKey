@@ -33,13 +33,14 @@ pub struct Settings {
     pub toggle_shortcut: String,
     pub start_at_login: bool,
     pub disabled_apps: Vec<String>,
-    pub per_app_mode: bool,
-    pub app_modes: BTreeMap<String, bool>,
     pub macros_enabled: bool,
     pub macros: BTreeMap<String, String>,
     pub slow_apps: Vec<String>,
     pub autocomplete_fix_apps: Vec<String>,
     pub last_seen_version: Option<String>,
+    /// Written by versions up to 0.0.23, drained by `load` into `disabled_apps`.
+    #[serde(rename = "app_modes", skip_serializing)]
+    legacy_app_modes: BTreeMap<String, bool>,
 }
 
 impl Default for Settings {
@@ -58,16 +59,18 @@ impl Default for Settings {
             toggle_shortcut: "ctrl+shift+v".into(),
             start_at_login: false,
             disabled_apps: Vec::new(),
-            per_app_mode: false,
-            app_modes: BTreeMap::new(),
             macros_enabled: true,
             macros: BTreeMap::new(),
             slow_apps: Vec::new(),
             autocomplete_fix_apps: Vec::new(),
             last_seen_version: None,
+            legacy_app_modes: BTreeMap::new(),
         }
     }
 }
+
+/// `CFBundleName` in `apps/vnkey/Info.plist`.
+const BUNDLE_NAME: &str = "PhaciusKey";
 
 impl Settings {
     pub fn config_path() -> PathBuf {
@@ -77,12 +80,45 @@ impl Settings {
             .join("config.toml")
     }
 
-    pub fn load() -> Self {
+    pub fn load(own_name: Option<&str>) -> Self {
         let path = Self::config_path();
-        match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_default(),
-            Err(_) => Self::default(),
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+
+        let settings = toml::from_str::<Self>(&text)
+            .unwrap_or_default()
+            .migrated(own_name);
+
+        // Retired keys survive in the file until something rewrites it, and
+        // nothing need ever change in a session. Settle it at startup instead.
+        if toml::to_string_pretty(&settings).is_ok_and(|current| current != text) {
+            settings.save();
         }
+        settings
+    }
+
+    /// Our own name is dropped rather than carried over: until 0.0.23 the
+    /// event tap credited keystrokes in our own settings window to PhaciusKey,
+    /// so configs in the wild remember an app the user never chose.
+    ///
+    /// `CFBundleName` is matched as well as `own_name`, because the artefact
+    /// was written by the installed bundle and a build run straight from
+    /// `target/` reports the executable name instead.
+    fn migrated(mut self, own_name: Option<&str>) -> Self {
+        let ours = |app: &str| {
+            app.eq_ignore_ascii_case(BUNDLE_NAME)
+                || own_name.is_some_and(|own| own.eq_ignore_ascii_case(app))
+        };
+
+        for (app, on) in std::mem::take(&mut self.legacy_app_modes) {
+            if !on && !ours(&app) && !self.excluded_for(Some(&app)) {
+                self.disabled_apps.push(app);
+            }
+        }
+        self.disabled_apps.retain(|app| !ours(app));
+        self.disabled_apps.sort_by_key(|a| a.to_ascii_lowercase());
+        self
     }
 
     pub fn save(&self) {
@@ -100,7 +136,7 @@ impl Settings {
         }
     }
 
-    pub fn disabled_for(&self, app: Option<&str>) -> bool {
+    pub fn excluded_for(&self, app: Option<&str>) -> bool {
         match app {
             Some(app) => self
                 .disabled_apps
@@ -111,23 +147,15 @@ impl Settings {
     }
 
     pub fn vietnamese_on(&self, app: Option<&str>) -> bool {
-        if self.disabled_for(app) {
-            return false;
-        }
-        if self.per_app_mode {
-            if let Some(&remembered) = app.and_then(|a| self.app_modes.get(&a.to_ascii_lowercase()))
-            {
-                return remembered;
-            }
-        }
-        self.enabled
+        !self.excluded_for(app) && self.enabled
     }
 
-    pub fn set_app_mode(&mut self, app: &str, on: bool) {
-        if on {
-            self.disabled_apps.retain(|d| !d.eq_ignore_ascii_case(app));
+    pub fn set_excluded(&mut self, app: &str, excluded: bool) {
+        self.disabled_apps.retain(|d| !d.eq_ignore_ascii_case(app));
+        if excluded {
+            self.disabled_apps.push(app.to_string());
+            self.disabled_apps.sort_by_key(|a| a.to_ascii_lowercase());
         }
-        self.app_modes.insert(app.to_ascii_lowercase(), on);
     }
 
     pub fn to_core(&self, app: Option<&str>) -> CoreConfig {
@@ -168,6 +196,19 @@ pub struct Shortcut {
     pub key: char,
 }
 
+/// A combination is one key plus one or two modifiers: two or three keys held
+/// at once. One modifier is the floor because a bare key would fire mid-word.
+const MODIFIERS: std::ops::RangeInclusive<usize> = 1..=2;
+
+impl Shortcut {
+    fn modifier_count(&self) -> usize {
+        [self.ctrl, self.shift, self.alt, self.cmd]
+            .into_iter()
+            .filter(|held| *held)
+            .count()
+    }
+}
+
 pub fn parse_shortcut(s: &str) -> Option<Shortcut> {
     let mut sc = Shortcut {
         ctrl: false,
@@ -200,8 +241,7 @@ pub fn parse_shortcut(s: &str) -> Option<Shortcut> {
         }
     }
 
-    let has_modifier = sc.ctrl || sc.shift || sc.alt || sc.cmd;
-    (sc.key != '\0' && has_modifier).then_some(sc)
+    (sc.key != '\0' && MODIFIERS.contains(&sc.modifier_count())).then_some(sc)
 }
 
 pub fn valid_macro_trigger(trigger: &str) -> bool {
@@ -266,7 +306,8 @@ pub fn shortcut_from_event(
     cmd: bool,
     code: &str,
 ) -> Option<String> {
-    if !(ctrl || alt || shift || cmd) {
+    let held = [ctrl, alt, shift, cmd].into_iter().filter(|h| *h).count();
+    if !MODIFIERS.contains(&held) {
         return None;
     }
     let key = match code.as_bytes() {
@@ -291,27 +332,28 @@ pub fn shortcut_from_event(
     Some(parts.join("+"))
 }
 
-pub fn shortcut_display(shortcut: &str) -> String {
+/// One caption per keycap. Modifier order follows the macOS convention
+/// (⌃⌥⇧⌘), which is the order the glyphs are printed in on the keyboard.
+pub fn shortcut_parts(shortcut: &str) -> Vec<String> {
     let Some(sc) = parse_shortcut(shortcut) else {
-        return shortcut.to_string();
+        return vec![shortcut.to_string()];
     };
-    let mut out = String::new();
-    for (held, glyph) in [
+    let mut parts: Vec<String> = [
         (sc.ctrl, '⌃'),
         (sc.alt, '⌥'),
         (sc.shift, '⇧'),
         (sc.cmd, '⌘'),
-    ] {
-        if held {
-            out.push(glyph);
-        }
-    }
-    if sc.key == ' ' {
-        out.push_str("Space");
-    } else {
-        out.extend(sc.key.to_uppercase());
-    }
-    out
+    ]
+    .into_iter()
+    .filter(|(held, _)| *held)
+    .map(|(_, glyph)| glyph.to_string())
+    .collect();
+
+    parts.push(match sc.key {
+        ' ' => "Space".to_string(),
+        key => key.to_uppercase().to_string(),
+    });
+    parts
 }
 
 #[cfg(test)]
@@ -367,35 +409,110 @@ mod tests {
     }
 
     #[test]
-    fn disabled_for_is_case_insensitive() {
+    fn a_combination_holds_two_or_three_keys() {
+        assert!(parse_shortcut("ctrl+v").is_some());
+        assert!(parse_shortcut("ctrl+shift+v").is_some());
+        assert!(parse_shortcut("ctrl+alt+shift+v").is_none());
+        assert!(parse_shortcut("ctrl+alt+shift+cmd+v").is_none());
+    }
+
+    #[test]
+    fn excluded_for_is_case_insensitive() {
         let settings = Settings {
             disabled_apps: vec!["Terminal".into()],
             ..Default::default()
         };
-        assert!(settings.disabled_for(Some("terminal")));
-        assert!(!settings.disabled_for(Some("Safari")));
-        assert!(!settings.disabled_for(None));
+        assert!(settings.excluded_for(Some("terminal")));
+        assert!(!settings.excluded_for(Some("Safari")));
+        assert!(!settings.excluded_for(None));
     }
 
     #[test]
-    fn per_app_memory_beats_global_and_exclusion_beats_memory() {
-        let mut settings = Settings {
-            per_app_mode: true,
-            ..Default::default()
-        };
+    fn exclusion_beats_the_global_switch() {
+        let mut settings = Settings::default();
         assert!(settings.vietnamese_on(Some("Safari")));
-        settings.enabled = false;
-        assert!(!settings.vietnamese_on(Some("Safari")));
 
-        settings.set_app_mode("Safari", true);
-        assert!(settings.vietnamese_on(Some("safari")));
+        settings.set_excluded("Safari", true);
+        assert!(!settings.vietnamese_on(Some("safari")));
+        assert!(settings.vietnamese_on(Some("Terminal")));
+
+        settings.enabled = false;
         assert!(!settings.vietnamese_on(Some("Terminal")));
 
-        settings.disabled_apps.push("Safari".into());
-        assert!(!settings.vietnamese_on(Some("Safari")));
-        settings.set_app_mode("safari", true);
+        settings.enabled = true;
+        settings.set_excluded("SAFARI", false);
         assert!(settings.vietnamese_on(Some("Safari")));
         assert!(settings.disabled_apps.is_empty());
+    }
+
+    #[test]
+    fn excluding_the_same_app_twice_lists_it_once() {
+        let mut settings = Settings::default();
+        settings.set_excluded("Safari", true);
+        settings.set_excluded("safari", true);
+        assert_eq!(settings.disabled_apps, ["safari"]);
+    }
+
+    #[test]
+    fn apps_remembered_as_off_become_exclusions() {
+        let settings = toml::from_str::<Settings>(
+            r#"
+            enabled = true
+            per_app_mode = true
+            disabled_apps = ["Terminal"]
+
+            [app_modes]
+            safari = false
+            notes = true
+            terminal = false
+            "#,
+        )
+        .unwrap()
+        .migrated(None);
+
+        assert_eq!(settings.disabled_apps, ["safari", "Terminal"]);
+        assert!(settings.legacy_app_modes.is_empty());
+    }
+
+    #[test]
+    fn migration_drops_our_own_name_from_both_lists() {
+        let settings = toml::from_str::<Settings>(
+            r#"
+            disabled_apps = ["PhaciusKey", "Terminal"]
+
+            [app_modes]
+            phaciuskey = false
+            safari = false
+            "#,
+        )
+        .unwrap()
+        .migrated(Some("PhaciusKey"));
+
+        assert_eq!(settings.disabled_apps, ["safari", "Terminal"]);
+    }
+
+    /// A build run from `target/` reports the executable name, so matching on
+    /// that alone would leave the installed bundle's name behind for good.
+    #[test]
+    fn migration_drops_the_bundle_name_whatever_this_build_is_called() {
+        let settings = toml::from_str::<Settings>(r#"disabled_apps = ["phaciuskey", "Notes"]"#)
+            .unwrap()
+            .migrated(Some("vnkey"));
+
+        assert_eq!(settings.disabled_apps, ["Notes"]);
+    }
+
+    #[test]
+    fn the_retired_keys_are_not_written_back() {
+        let settings =
+            toml::from_str::<Settings>("per_app_mode = true\n[app_modes]\nsafari = false\n")
+                .unwrap()
+                .migrated(None);
+        let written = toml::to_string_pretty(&settings).unwrap();
+
+        assert!(!written.contains("app_modes"), "{written}");
+        assert!(!written.contains("per_app_mode"), "{written}");
+        assert!(written.contains("safari"), "{written}");
     }
 
     fn macros(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
@@ -497,6 +614,16 @@ mod tests {
     }
 
     #[test]
+    fn a_recorded_combination_stops_at_three_keys() {
+        assert_eq!(
+            shortcut_from_event(true, true, false, false, "KeyV").as_deref(),
+            Some("ctrl+alt+v")
+        );
+        assert_eq!(shortcut_from_event(true, true, true, false, "KeyV"), None);
+        assert_eq!(shortcut_from_event(true, true, true, true, "KeyV"), None);
+    }
+
+    #[test]
     fn keys_the_hook_cannot_match_are_refused() {
         assert_eq!(shortcut_from_event(true, false, false, false, "F5"), None);
         assert_eq!(
@@ -511,26 +638,37 @@ mod tests {
 
     #[test]
     fn everything_the_recorder_produces_parses_back() {
+        let combinations = [
+            (true, false, false, false),
+            (false, true, false, false),
+            (false, false, true, false),
+            (false, false, false, true),
+            (true, false, true, false),
+            (false, true, false, true),
+        ];
         for code in ["KeyA", "KeyZ", "Digit0", "Digit9", "Space"] {
-            let recorded = shortcut_from_event(true, true, true, true, code)
-                .unwrap_or_else(|| panic!("{code} should record"));
-            assert!(
-                parse_shortcut(&recorded).is_some(),
-                "{recorded} should parse"
-            );
+            for (ctrl, alt, shift, cmd) in combinations {
+                let recorded = shortcut_from_event(ctrl, alt, shift, cmd, code)
+                    .unwrap_or_else(|| panic!("{code} should record"));
+                assert!(
+                    parse_shortcut(&recorded).is_some(),
+                    "{recorded} should parse"
+                );
+            }
         }
     }
 
     #[test]
-    fn shortcuts_are_shown_as_mac_glyphs() {
-        assert_eq!(shortcut_display("ctrl+shift+v"), "⌃⇧V");
-        assert_eq!(shortcut_display("cmd+space"), "⌘Space");
-        assert_eq!(shortcut_display("cmd+ctrl+alt+shift+k"), "⌃⌥⇧⌘K");
+    fn a_shortcut_becomes_one_caption_per_keycap() {
+        assert_eq!(shortcut_parts("ctrl+shift+v"), ["⌃", "⇧", "V"]);
+        assert_eq!(shortcut_parts("cmd+space"), ["⌘", "Space"]);
+        assert_eq!(shortcut_parts("cmd+alt+k"), ["⌥", "⌘", "K"]);
     }
 
     #[test]
     fn an_unparseable_shortcut_is_shown_as_written() {
-        assert_eq!(shortcut_display("hyper+v"), "hyper+v");
+        assert_eq!(shortcut_parts("hyper+v"), ["hyper+v"]);
+        assert_eq!(shortcut_parts("ctrl+alt+shift+v"), ["ctrl+alt+shift+v"]);
     }
 
     #[test]
@@ -542,12 +680,5 @@ mod tests {
         settings.macros_enabled = false;
         assert!(settings.to_core(None).macros.is_empty());
         assert_eq!(settings.macros.len(), 1);
-    }
-
-    #[test]
-    fn memory_is_inert_while_per_app_mode_is_off() {
-        let mut settings = Settings::default();
-        settings.set_app_mode("Safari", false);
-        assert!(settings.vietnamese_on(Some("Safari")));
     }
 }

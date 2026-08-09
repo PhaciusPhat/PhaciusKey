@@ -122,14 +122,7 @@ pub fn update(f: impl FnOnce(&mut Settings)) -> Settings {
 
 pub fn toggle_vietnamese() -> Settings {
     let updated = with(|s| {
-        let app = s.current_app.clone();
-        match app.filter(|_| s.settings.per_app_mode) {
-            Some(app) => {
-                let now = s.settings.vietnamese_on(Some(&app));
-                s.settings.set_app_mode(&app, !now);
-            }
-            None => s.settings.enabled = !s.settings.enabled,
-        }
+        s.settings.enabled = !s.settings.enabled;
         s.engine
             .set_config(s.settings.to_core(s.current_app.as_deref()));
         s.engine.reset();
