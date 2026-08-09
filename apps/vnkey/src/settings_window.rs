@@ -9,6 +9,7 @@
 //! the window always mirrors reality instead of tracking its own copy.
 
 use std::cell::RefCell;
+use std::sync::Mutex;
 
 use serde_json::{json, Value};
 use tao::dpi::LogicalSize;
@@ -16,10 +17,32 @@ use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use tao::window::{Window, WindowBuilder, WindowId};
 use wry::WebView;
 
-use crate::config::{parse_shortcut, Method, Placement, Settings};
+use crate::config::{
+    macro_export_json, merge_macros, parse_macro_export, parse_shortcut, shortcut_display,
+    shortcut_from_event, valid_macro_trigger, Method, Placement, Settings,
+};
 use crate::{autostart, platform, state, update, UserEvent};
 
 const HTML: &str = include_str!("settings.html");
+
+/// A one-shot message for the page — the result of an import or export.
+///
+/// It rides along on the next state snapshot rather than being pushed
+/// separately, which keeps the page's single "state in, commands out" flow.
+/// Taken as it is read, so it shows once and not on every later refresh.
+/// Only the main loop touches it; the mutex is what a `static` needs, not
+/// contention control.
+static NOTICE: Mutex<Option<String>> = Mutex::new(None);
+
+fn set_notice(text: impl Into<String>) {
+    if let Ok(mut notice) = NOTICE.lock() {
+        *notice = Some(text.into());
+    }
+}
+
+fn take_notice() -> Option<String> {
+    NOTICE.lock().ok().and_then(|mut notice| notice.take())
+}
 
 pub struct SettingsWindow {
     window: Window,
@@ -75,6 +98,9 @@ impl SettingsWindow {
 
     /// Closing the window only hides it — the app lives in the menu bar.
     pub fn hide(&self) {
+        // Closing the window mid-recording would otherwise leave the toggle
+        // shortcut suppressed with no way to disarm it.
+        state::set_shortcut_recording(false);
         self.window.set_visible(false);
     }
 
@@ -143,16 +169,28 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
         "method": match s.method { Method::Telex => "telex", Method::Vni => "vni" },
         "placement": match s.placement { Placement::Modern => "modern", Placement::Classic => "classic" },
         "auto_restore": s.auto_restore,
+        "standalone_w": s.standalone_w,
+        "quick_telex": s.quick_telex,
+        "quick_start_consonant": s.quick_start_consonant,
+        "quick_end_consonant": s.quick_end_consonant,
+        "auto_capitalize": s.auto_capitalize,
         "auto_update": s.auto_update,
-        "start_at_login": s.start_at_login,
+        // Live registration, not the stored copy: the user can switch the
+        // login item off in System Settings, and the page must not show a
+        // state macOS disagrees with.
+        "start_at_login": autostart::effective(s.start_at_login),
         "per_app_mode": s.per_app_mode,
         "toggle_shortcut": s.toggle_shortcut,
+        "shortcut_display": shortcut_display(&s.toggle_shortcut),
         "shortcut_valid": parse_shortcut(&s.toggle_shortcut).is_some(),
+        "macros_enabled": s.macros_enabled,
         "current_app": current_app,
         "apps": apps,
         "installed_apps": installed_apps,
         "macros": macros,
         "slow_apps": s.slow_apps,
+        "autocomplete_fix_apps": s.autocomplete_fix_apps,
+        "notice": take_notice(),
     })
     .to_string()
 }
@@ -189,9 +227,8 @@ pub fn apply_ipc(msg: &str) {
             else {
                 return;
             };
-            // A trigger with whitespace could never commit as one word.
             let trigger = trigger.trim().to_string();
-            if trigger.is_empty() || trigger.contains(char::is_whitespace) {
+            if !valid_macro_trigger(&trigger) {
                 return;
             }
             let expansion = expansion.to_string();
@@ -217,15 +254,124 @@ pub fn apply_ipc(msg: &str) {
                 }
             });
         }
+        Some("autocomplete_app") => {
+            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else { return };
+            let name = name.to_string();
+            state::update(move |s| {
+                s.autocomplete_fix_apps.retain(|a| !a.eq_ignore_ascii_case(&name));
+                if on {
+                    s.autocomplete_fix_apps.push(name.clone());
+                    s.autocomplete_fix_apps.sort_by_key(|a| a.to_ascii_lowercase());
+                }
+            });
+        }
+        // The page arms and disarms the recorder so the hook can hold the old
+        // shortcut back while candidate combinations are being pressed.
+        Some("shortcut_record") => {
+            let Some(on) = v["on"].as_bool() else { return };
+            state::set_shortcut_recording(on);
+        }
+        // A recorded key press, as raw event fields. Canonicalizing here keeps
+        // one source of truth with `parse_shortcut`, so the page cannot invent
+        // a shortcut string the hook would not recognize.
+        Some("shortcut_capture") => {
+            let code = v["code"].as_str().unwrap_or_default();
+            let held = |name: &str| v[name].as_bool().unwrap_or(false);
+            let Some(shortcut) =
+                shortcut_from_event(held("ctrl"), held("alt"), held("shift"), held("cmd"), code)
+            else {
+                return;
+            };
+            state::update(move |s| s.toggle_shortcut = shortcut);
+        }
+        Some("macros_export") => export_macros(),
+        Some("macros_import") => {
+            let Some(text) = v["text"].as_str() else { return };
+            import_macros(text);
+        }
         Some("open_config") => crate::open_config_file(),
         _ => {}
+    }
+}
+
+/// Write the macro list next to the user's other downloads and reveal it.
+///
+/// A fixed filename in a predictable folder rather than a save panel: there is
+/// no file-dialog binding in this build, and "it is in Downloads, and Finder
+/// just highlighted it" needs no explaining. Re-exporting overwrites, so the
+/// file tracks the live list instead of accumulating copies.
+fn export_macros() {
+    let settings = state::settings();
+    if settings.macros.is_empty() {
+        set_notice("There are no macros to export yet.");
+        return;
+    }
+
+    let Some(dir) = dirs::download_dir().or_else(dirs::home_dir) else {
+        set_notice("Could not work out where to save the file.");
+        return;
+    };
+    let path = dir.join("vnkey-macros.json");
+    if let Err(e) = std::fs::write(&path, macro_export_json(&settings.macros)) {
+        set_notice(format!("Could not write {}: {e}", path.display()));
+        return;
+    }
+
+    let count = settings.macros.len();
+    set_notice(format!("Exported {count} macro{} to {}", plural(count), path.display()));
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+}
+
+/// Merge an exported macro file into the current list.
+fn import_macros(text: &str) {
+    let (incoming, skipped) = match parse_macro_export(text) {
+        Ok(result) => result,
+        Err(e) => return set_notice(format!("Could not read that file — {e}")),
+    };
+    if incoming.is_empty() {
+        set_notice(match skipped {
+            0 => "That file had no macros in it.".to_string(),
+            n => format!("Nothing usable in that file — {n} entr{} skipped", plural_y(n)),
+        });
+        return;
+    }
+
+    let mut outcome = crate::config::ImportOutcome::default();
+    state::update(|s| outcome = merge_macros(&mut s.macros, incoming));
+
+    let mut parts = vec![format!("Added {}", outcome.added)];
+    if outcome.updated > 0 {
+        parts.push(format!("{} updated", outcome.updated));
+    }
+    if skipped > 0 {
+        parts.push(format!("{skipped} skipped"));
+    }
+    set_notice(format!("Imported macros — {}", parts.join(", ")));
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+fn plural_y(n: usize) -> &'static str {
+    if n == 1 {
+        "y"
+    } else {
+        "ies"
     }
 }
 
 fn apply_set(v: &Value) {
     let Some(key) = v["key"].as_str() else { return };
     match key {
-        "enabled" | "auto_restore" | "auto_update" | "per_app_mode" | "start_at_login" => {
+        "enabled" | "auto_restore" | "auto_update" | "per_app_mode" | "start_at_login"
+        | "standalone_w" | "quick_telex" | "quick_start_consonant" | "quick_end_consonant"
+        | "auto_capitalize" | "macros_enabled" => {
             let Some(on) = v["value"].as_bool() else { return };
             let key = key.to_string();
             let updated = state::update(|s| match key.as_str() {
@@ -234,6 +380,12 @@ fn apply_set(v: &Value) {
                 "auto_update" => s.auto_update = on,
                 "per_app_mode" => s.per_app_mode = on,
                 "start_at_login" => s.start_at_login = on,
+                "standalone_w" => s.standalone_w = on,
+                "quick_telex" => s.quick_telex = on,
+                "quick_start_consonant" => s.quick_start_consonant = on,
+                "quick_end_consonant" => s.quick_end_consonant = on,
+                "auto_capitalize" => s.auto_capitalize = on,
+                "macros_enabled" => s.macros_enabled = on,
                 _ => unreachable!(),
             });
             if key == "start_at_login" {
@@ -256,11 +408,7 @@ fn apply_set(v: &Value) {
             };
             state::update(move |s| s.placement = placement);
         }
-        "toggle_shortcut" => {
-            let Some(shortcut) = v["value"].as_str() else { return };
-            let shortcut = shortcut.to_string();
-            state::update(move |s| s.toggle_shortcut = shortcut);
-        }
+
         _ => {}
     }
 }

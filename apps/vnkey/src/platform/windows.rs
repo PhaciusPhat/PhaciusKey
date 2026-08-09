@@ -4,12 +4,22 @@
 //! a `WH_KEYBOARD_LL` low-level hook to intercept/suppress keystrokes and
 //! `SendInput` (with `KEYEVENTF_UNICODE`) to inject backspaces + Vietnamese
 //! text. It compiles only under `cfg(windows)` and must be verified on a real
-//! Windows machine before release — see the project TODO.
+//! Windows machine before release — see the project TODO. Two pieces below are
+//! reasoned from the documented API contracts but cannot be tested here:
+//! modifier state inside a low-level hook (see [`shortcut_modifier_down`]) and
+//! the ordering of injected text against a passed-through Enter/Tab (see
+//! `hook_proc`).
 //!
 //! Design parity with macOS:
-//! - The hook proc translates the virtual key to a character, routes it through
-//!   [`crate::state`], and returns `1` (non-zero) to swallow the original key
-//!   when the engine produces edit actions.
+//! - Editing and navigation keys are dispatched by virtual-key code *before*
+//!   the character path: Backspace pops the composition buffer, Esc restores
+//!   the raw keystrokes, Enter/Tab commit the word, and shortcuts, arrows and
+//!   function keys end it. Only what is left is translated to a character and
+//!   fed to the engine — a control character reaching the buffer leaves the
+//!   engine's idea of the screen wrong for the rest of the word, which corrupts
+//!   every keystroke after it.
+//! - The hook proc returns `1` (non-zero) to swallow the original key when the
+//!   engine produces edit actions *and* those actions reached the app.
 //! - Injected events carry a sentinel in `dwExtraInfo` so the hook ignores our
 //!   own synthesized keystrokes (the same trick as macOS's `eventSourceUserData`).
 //!
@@ -80,8 +90,10 @@ use windows::Win32::System::DataExchange::{
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyboardLayout, GetKeyboardState, SendInput, ToUnicodeEx, INPUT, INPUT_0, INPUT_KEYBOARD,
-    KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VK_BACK, VK_CONTROL, VK_INSERT, VK_SHIFT, VK_V,
+    GetAsyncKeyState, GetKeyboardLayout, GetKeyboardState, SendInput, ToUnicodeEx, INPUT, INPUT_0,
+    INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VK_BACK, VK_CONTROL, VK_DELETE,
+    VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F12, VK_HOME, VK_INSERT, VK_LEFT, VK_LWIN, VK_MENU,
+    VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL,
@@ -156,26 +168,167 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         return call_next(code, wparam, lparam);
     }
 
+    // `vkCode` is documented as 1–254, so it always fits a VIRTUAL_KEY.
+    let vk = kb.vkCode as u16;
+
+    if !state::vietnamese_active() {
+        // Everything passes through untouched while typing is off, Backspace
+        // included — the engine holds no composition.
+        state::reset();
+        return call_next(code, wparam, lparam);
+    }
+
+    // Keys pressed with Ctrl, Alt or Win are shortcuts (Ctrl+C, Win+E), never
+    // Vietnamese input: a shortcut is a word boundary, and the key itself is
+    // the app's. Shift is intentionally excluded so capitals still compose.
+    if shortcut_modifier_down() {
+        state::reset();
+        return call_next(code, wparam, lparam);
+    }
+
+    // Backspace needs its own path: it must pop the last raw keystroke from the
+    // composition buffer (which can stand for more than one on-screen
+    // character, e.g. telex "as" → "á") and redraw. Translated as a character
+    // it would push U+0008 into the buffer instead, which desynchronizes the
+    // engine from the screen for the rest of the word.
+    if vk == VK_BACK.0 {
+        let actions = state::backspace();
+        if actions.is_empty() {
+            return call_next(code, wparam, lparam); // not composing — native Backspace
+        }
+        if inject(&actions) {
+            return LRESULT(1); // we already redrew; swallow the original
+        }
+        // Injection did not reach the app: the native Backspace still deletes
+        // one displayed character, which is exactly what the engine recorded.
+        return call_next(code, wparam, lparam);
+    }
+
+    // Esc restores the raw keystrokes of the word being composed ("đấy" →
+    // "ddaays") and is consumed by that; with nothing to restore it is the
+    // app's Esc as usual (and a word boundary).
+    if vk == VK_ESCAPE.0 {
+        let actions = state::restore_raw();
+        if !actions.is_empty() && inject(&actions) {
+            return LRESULT(1);
+        }
+        state::reset();
+        return call_next(code, wparam, lparam);
+    }
+
+    // Enter and Tab commit the word (so macros expand) but always pass through
+    // — the app needs the key itself. Numpad Enter is VK_RETURN too; only the
+    // extended-key flag distinguishes it, so it is covered here.
+    //
+    // Ordering is NOT guaranteed the way macOS's `CGEventTapPostEvent` is. The
+    // raw input thread is blocked waiting for this hook proc to return, so
+    // events handed to `SendInput` here cannot be processed before we return,
+    // and the key we let through is dispatched as part of that return: the
+    // expansion most likely lands *after* the Enter/Tab, not before it. On the
+    // clipboard-paste path it certainly does — that job runs on another thread.
+    // Verify on hardware. If it is wrong, the fix is to swallow the key and
+    // append its own down/up to the tail of the same `SendInput` batch, since a
+    // single `SendInput` call is not interleaved with other input.
+    if vk == VK_RETURN.0 || vk == VK_TAB.0 {
+        // Enter ends the line, so the next word opens a sentence; Tab commits
+        // a word without ending anything.
+        let actions = if vk == VK_TAB.0 { state::commit_word() } else { state::commit_line() };
+        if !actions.is_empty() {
+            let _ = inject(&actions);
+        }
+        return call_next(code, wparam, lparam);
+    }
+
+    // Arrows, Home/End, Page Up/Down, Insert, forward Delete and F1–F12 move
+    // the caret or act on the app, so the engine's buffer no longer describes
+    // the text at the cursor. Treat them as a composition boundary.
+    if is_navigation_key(vk) {
+        state::reset();
+        return call_next(code, wparam, lparam);
+    }
+
     let ch = match translate_char(kb.vkCode) {
         Some(c) => c,
         None => return call_next(code, wparam, lparam),
     };
+
+    // Defense in depth for the control keys not named above (Pause, the media
+    // keys on layouts that map them, anything a future Windows adds): none are
+    // Vietnamese input, and feeding one to the engine is the corruption this
+    // whole dispatch exists to prevent.
+    if ch.is_control() {
+        state::reset();
+        return call_next(code, wparam, lparam);
+    }
 
     let actions = state::process_char(ch);
     if actions.is_empty() {
         return call_next(code, wparam, lparam);
     }
 
-    inject(&actions);
-    LRESULT(1) // swallow the original keystroke
+    if inject(&actions) {
+        LRESULT(1) // swallow the original keystroke
+    } else {
+        // Injection unavailable: pass the raw keystroke through rather than
+        // swallowing it with no replacement — a plain letter beats a lost one.
+        call_next(code, wparam, lparam)
+    }
 }
 
 fn call_next(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
+/// Whether a shortcut modifier — Ctrl, Alt, or either Windows key — is held.
+///
+/// `GetAsyncKeyState` and not `GetKeyState`/`GetKeyboardState`: those report the
+/// state derived from the *calling thread's* input queue, and a `WH_KEYBOARD_LL`
+/// proc runs on the thread that installed the hook, which is not the thread
+/// receiving the keystrokes. That queue never sees the modifier go down, so
+/// `GetKeyState` would report Ctrl as up for the whole chord. `GetAsyncKeyState`
+/// reads the global physical key state and is correct from any thread. The high
+/// bit means "currently down"; the low bit (pressed since the last call) is
+/// deliberately ignored.
+///
+/// Layouts that have AltGr report it as Ctrl+Alt, so AltGr combinations count as
+/// shortcuts here. Telex and VNI never need AltGr, but on a US-International
+/// layout this would block AltGr characters — worth checking on hardware.
+fn shortcut_modifier_down() -> bool {
+    [VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN].iter().any(|vk| {
+        let state = unsafe { GetAsyncKeyState(vk.0 as i32) };
+        (state as u16 & 0x8000) != 0
+    })
+}
+
+/// Whether the key moves the caret or otherwise leaves the composition stale.
+///
+/// `VK_DELETE` here is *forward* delete, not Backspace (that is `VK_BACK`): it
+/// removes text the engine is not tracking, so it ends the word rather than
+/// editing the buffer.
+fn is_navigation_key(vk: u16) -> bool {
+    const NAV: [u16; 10] = [
+        VK_LEFT.0,
+        VK_RIGHT.0,
+        VK_UP.0,
+        VK_DOWN.0,
+        VK_HOME.0,
+        VK_END.0,
+        VK_PRIOR.0,
+        VK_NEXT.0,
+        VK_INSERT.0,
+        VK_DELETE.0,
+    ];
+    NAV.contains(&vk) || (VK_F1.0..=VK_F12.0).contains(&vk)
+}
+
 /// Translate a virtual key code to the character it would produce, honoring the
 /// current keyboard layout and modifier state.
+///
+/// `GetKeyboardState` is subject to the same hook-thread caveat described on
+/// [`shortcut_modifier_down`], so Shift and Caps Lock may not be reflected here
+/// and capitals may come back lowercase. Unverified, and left alone deliberately
+/// — the async state has no Caps Lock *toggle* bit, so the fix is more than a
+/// swapped call. Check this first on real hardware.
 unsafe fn translate_char(vk: u32) -> Option<char> {
     let mut keyboard_state = [0u8; 256];
     GetKeyboardState(&mut keyboard_state).ok()?;
@@ -250,22 +403,23 @@ struct PasteJob {
 
 /// Inject the edit actions, preferring `SendInput` and falling back to
 /// clipboard + paste as configured. See the module docs.
-fn inject(actions: &[EditAction]) {
+///
+/// Returns `false` only when nothing was delivered and nothing is queued: the
+/// caller must then pass the original keystroke through instead of swallowing
+/// it, or the character is silently lost (the "sometimes the first letter of a
+/// word vanishes" bug).
+fn inject(actions: &[EditAction]) -> bool {
     let mode = inject_mode();
     let key = match mode {
         // Explicit paste mode: never try SendInput for the text.
-        InjectMode::Paste(key) => {
-            queue_paste(actions, key);
-            return;
-        }
+        InjectMode::Paste(key) => return queue_paste(actions, key),
         InjectMode::SendInput | InjectMode::Auto => PasteKey::CtrlV,
     };
 
     // Already proved SendInput cannot deliver — stay on the paste path so jobs
     // keep their order behind the ones already queued.
     if PASTE_LATCHED.load(Ordering::Relaxed) {
-        queue_paste(actions, key);
-        return;
+        return queue_paste(actions, key);
     }
 
     let mut inputs: Vec<INPUT> = Vec::new();
@@ -286,13 +440,16 @@ fn inject(actions: &[EditAction]) {
         }
     }
 
+    // Nothing to send: the engine asked for no visible edit (an empty insert
+    // means "swallow the key, the screen is already right"), which the caller
+    // must still honor by swallowing.
     if inputs.is_empty() {
-        return;
+        return true;
     }
 
     let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } as usize;
     if sent == inputs.len() {
-        return;
+        return true;
     }
 
     if mode == InjectMode::SendInput {
@@ -301,7 +458,7 @@ fn inject(actions: &[EditAction]) {
              set VNKEY_WIN_INJECT=paste to use the clipboard fallback",
             inputs.len()
         );
-        return;
+        return sent > 0;
     }
 
     if sent == 0 {
@@ -313,20 +470,24 @@ fn inject(actions: &[EditAction]) {
             inputs.len()
         );
         PASTE_LATCHED.store(true, Ordering::Relaxed);
-        queue_paste(actions, key);
+        queue_paste(actions, key)
     } else {
         // Partial delivery: some characters already reached the app. Pasting the
-        // batch again would duplicate them, so report and leave it alone.
+        // batch again would duplicate them, so report and leave it alone — and
+        // report success, because letting the original keystroke through would
+        // add a raw character on top of a half-applied edit.
         eprintln!(
             "[vnkey] SendInput delivered only {sent}/{} events; not retrying via paste \
              (would duplicate text)",
             inputs.len()
         );
+        true
     }
 }
 
-/// Hand the batch to the paste worker, preserving action order.
-fn queue_paste(actions: &[EditAction], key: PasteKey) {
+/// Hand the batch to the paste worker, preserving action order. Returns whether
+/// the text is on its way — see [`inject`].
+fn queue_paste(actions: &[EditAction], key: PasteKey) -> bool {
     let steps: Vec<PasteStep> = actions
         .iter()
         .filter_map(|action| match action {
@@ -336,8 +497,9 @@ fn queue_paste(actions: &[EditAction], key: PasteKey) {
             EditAction::Insert(text) => Some(PasteStep::Text(text.clone())),
         })
         .collect();
+    // No visible edit to perform — see the same case in [`inject`].
     if steps.is_empty() {
-        return;
+        return true;
     }
 
     let sender = paste_worker();
@@ -348,6 +510,7 @@ fn queue_paste(actions: &[EditAction], key: PasteKey) {
     if !queued {
         eprintln!("[vnkey] paste worker unavailable; dropped one batch of Vietnamese text");
     }
+    queued
 }
 
 /// The single worker thread that performs clipboard pastes, started on first use.

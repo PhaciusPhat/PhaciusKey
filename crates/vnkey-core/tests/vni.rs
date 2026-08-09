@@ -92,3 +92,18 @@ fn viet() {
     // pressed once: pressing '5' twice now cancels it and types the digit.
     assert_eq!(displayed_after("vie6t5"), "việt");
 }
+
+#[test]
+fn tone_reverses_after_space_and_backspace() {
+    // The reported bug: "đoán" → space → Backspace → '1' typed "đoán1"
+    // instead of reversing the tone. Backspace over the space must resume
+    // composing the word, so the repeated tone key cancels sắc: "đoan1".
+    let mut e = engine();
+    for ch in "d9oan1".chars() {
+        e.process(Keystroke::char(ch));
+    }
+    e.process(Keystroke::char(' '));
+    e.backspace();
+    e.process(Keystroke::char('1'));
+    assert_eq!(e.current_displayed(), "đoan1");
+}

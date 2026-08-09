@@ -9,9 +9,19 @@ engine driving thin per-OS keyboard hooks.
 - Auto-restores raw keystrokes for English and other non-Vietnamese words
 - Modern and Classic tone placement (`hòa` vs `hoà`)
 - **Esc** restores the raw keystrokes of the word being composed (`đấy` → `ddaays`)
-- **Macros** — a word you define expands when you finish it (`vd` → `ví dụ`)
+- **Macros** — a word you define expands when you finish it (`vd` → `ví dụ`),
+  with a master switch that parks the feature without discarding your list
+- **Toggle shortcut you record by pressing it**, not by typing its name
+- **Backspace resumes the previous word** — delete back over the space after
+  `đoán` and it re-opens for editing, so a repeated tone key still reverses the
+  tone instead of typing on top of it
+- Optional Telex shortcuts: standalone `w` → `ư`, quick Telex (`cc` → `ch`),
+  quick start (`f` → `ph`) and end (`g` → `ng`) consonants
+- Optional sentence auto-capitalization after `.`, `!`, `?` or a new line
 - Warns from the tray when a password field's Secure Input pauses Vietnamese typing
 - Per-app **slow typing** mode for apps that drop rapid synthetic keystrokes
+- Per-app **autocomplete fix** for address bars and cells whose inline
+  suggestion eats the first Backspace and doubles your letters
 - Per-app on/off memory (EVKey-style): the toggle can remember Vietnamese
   on/off separately for every app and restore it as you switch focus
 - Menu-bar / system-tray control (toggle, method, tone placement, auto-restore)
@@ -163,6 +173,11 @@ Set `auto_update = false` in `config.toml` to be notified only.
 | `ow` | ơ | `j` | nặng · |
 | `uw` | ư | `z` | remove tone |
 | `dd` | đ | | |
+| `w` | ư (on its own — `thw` → `thư`) | | |
+
+Turning **Standalone “w” types “ư”** off in Settings gives the behaviour
+OpenKey calls *Simple Telex 1*; vnkey has no `[`/`]` shortcuts, so its default
+Telex already matches *Simple Telex 2*.
 
 ### VNI cheat-sheet
 
@@ -195,6 +210,12 @@ via `.github/workflows/ci.yml`.
 `apps/vnkey/src/platform/windows.rs` is a compiling scaffold (`WH_KEYBOARD_LL` +
 `SendInput`) but is **untested on real hardware**. It needs verification on a
 Windows machine before a Windows release — see the platform module's header.
+
+The hook now dispatches Backspace, Esc, Enter/Tab, shortcuts and navigation
+keys the way the macOS tap does, instead of translating every key to a
+character. Two things there still want hardware verification: whether an
+injected edit really lands before a passed-through Enter, and whether
+`GetAsyncKeyState` reports modifiers correctly from the hook thread.
 
 ---
 

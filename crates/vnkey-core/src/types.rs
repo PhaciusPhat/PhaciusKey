@@ -44,6 +44,23 @@ pub struct Config {
     /// Text-expansion macros: an on-screen word matching a key exactly
     /// (case-sensitive) is replaced with its value when the word commits.
     pub macros: std::collections::HashMap<String, String>,
+    /// Telex: a `w` with no vowel to put a horn on types `ư` ("thw" → "thư",
+    /// "w" → "ư"). Standard in Unikey and OpenKey, hence on by default; the
+    /// key still types a literal `w` where `ư` cannot start a syllable.
+    pub standalone_w: bool,
+    /// Quick Telex: a doubled consonant at the start of a word expands to the
+    /// digraph it stands for ("cc" → "ch", "nn" → "ng"). Off by default, as in
+    /// OpenKey — it costs the ability to type a literal doubled consonant.
+    pub quick_telex: bool,
+    /// Quick start consonants: `f` → "ph", `j` → "gi", `w` → "qu" as the first
+    /// letter of a word. Off by default: these letters are Telex tone and horn
+    /// keys everywhere else, so the shortcut is a deliberate trade.
+    pub quick_start_consonant: bool,
+    /// Quick end consonants: after a vowel, a final `g` → "ng", `h` → "nh",
+    /// `k` → "ch". Off by default for the same reason.
+    pub quick_end_consonant: bool,
+    /// Capitalize the first letter of a sentence as it is typed.
+    pub auto_capitalize: bool,
 }
 
 impl Default for Config {
@@ -54,6 +71,11 @@ impl Default for Config {
             enabled: true,
             auto_restore: true,
             macros: std::collections::HashMap::new(),
+            standalone_w: true,
+            quick_telex: false,
+            quick_start_consonant: false,
+            quick_end_consonant: false,
+            auto_capitalize: false,
         }
     }
 }

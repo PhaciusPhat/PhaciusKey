@@ -4,7 +4,7 @@ pub mod vni;
 pub use telex::TelexMethod;
 pub use vni::VniMethod;
 
-use crate::types::Tone;
+use crate::types::{Config, Tone};
 
 /// Result of processing the raw buffer through an input method.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,5 +47,9 @@ pub fn apply_case_mask(text: &str, mask: &[bool]) -> String {
 pub trait InputMethodProcessor {
     /// Process the full raw buffer and return a MethodResult.
     /// Returns None if the buffer is empty.
-    fn process(&self, raw: &str) -> Option<MethodResult>;
+    ///
+    /// `config` carries the optional typing conventions (quick Telex, quick
+    /// consonants, standalone `w`) — they change what a key sequence means, so
+    /// they belong here rather than being applied to the result afterwards.
+    fn process(&self, raw: &str, config: &Config) -> Option<MethodResult>;
 }

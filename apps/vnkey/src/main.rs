@@ -82,10 +82,25 @@ fn main() {
     }
 
     // Load persisted settings and initialize the shared engine state.
-    let settings = Settings::load();
-    // Re-assert the login item every launch: it self-heals a moved bundle, and
-    // removes the agent if the user turned the setting off by editing the file.
-    autostart::apply(settings.start_at_login);
+    let mut settings = Settings::load();
+
+    // Older versions installed a LaunchAgent plist by hand; drop it and hand
+    // the user's request to macOS instead, so the login item is registered the
+    // way the system expects. Re-registering is only done here, on migration —
+    // asserting it every launch means asking the system to register something
+    // already registered, which it answers with an error.
+    if autostart::migrate_legacy_launch_agent() && settings.start_at_login {
+        autostart::apply(true);
+    }
+
+    // macOS owns this state: the user can switch the login item off in System
+    // Settings, and the stored copy has to follow rather than fight it.
+    let registered = autostart::effective(settings.start_at_login);
+    if registered != settings.start_at_login {
+        settings.start_at_login = registered;
+        settings.save();
+    }
+
     state::init(settings);
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();

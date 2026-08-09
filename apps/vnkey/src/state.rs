@@ -6,6 +6,7 @@
 //! the main thread, so this lock mediates genuine cross-thread access — not
 //! just a `Send`-bound formality.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use vnkey_core::{EditAction, Engine, Keystroke};
@@ -30,6 +31,24 @@ static SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
 /// the toggle shortcut and app switches), so it must only *signal* the main
 /// loop, never touch UI itself.
 static ON_CHANGE: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// Set while the settings window is recording a new toggle shortcut.
+///
+/// The old combination must not fire then: the user is pressing candidate
+/// combinations *at* the recorder, and each attempt would otherwise flip
+/// Vietnamese typing on and off. An atomic rather than a settings field
+/// because the tap thread reads it for every keystroke and must not queue
+/// behind the settings mutex to do so.
+static RECORDING_SHORTCUT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_shortcut_recording(on: bool) {
+    RECORDING_SHORTCUT.store(on, Ordering::Relaxed);
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn shortcut_recording() -> bool {
+    RECORDING_SHORTCUT.load(Ordering::Relaxed)
+}
 
 pub fn set_on_change(f: Box<dyn Fn() + Send + Sync>) {
     let _ = ON_CHANGE.set(f);
@@ -77,11 +96,31 @@ pub fn restore_raw() -> Vec<EditAction> {
     with(|s| s.engine.restore_raw()).unwrap_or_default()
 }
 
-/// Commit the current word without a boundary character (Enter/Tab), so a
-/// macro still expands there.
+/// Commit the current word without a boundary character (Tab), so a macro
+/// still expands there.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn commit_word() -> Vec<EditAction> {
     with(|s| s.engine.commit_word()).unwrap_or_default()
+}
+
+/// Commit the current word and start a new sentence (Enter) — as
+/// [`commit_word`], but the next word is a sentence opener for
+/// auto-capitalization.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn commit_line() -> Vec<EditAction> {
+    with(|s| s.engine.commit_line()).unwrap_or_default()
+}
+
+/// Whether injection should prefix an invisible sentinel character for the
+/// app currently receiving keystrokes (the user listed it under
+/// `autocomplete_fix_apps`).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn autocomplete_fix_here() -> bool {
+    with(|s| match &s.current_app {
+        Some(app) => s.settings.autocomplete_fix_apps.iter().any(|a| a.eq_ignore_ascii_case(app)),
+        None => false,
+    })
+    .unwrap_or(false)
 }
 
 /// Whether injection should pause between events for the app currently
@@ -96,8 +135,8 @@ pub fn slow_typing_here() -> bool {
 }
 
 /// Reset the composition buffer (mouse click / focus change).
-// Only wired up on macOS today; the Windows scaffold will call it once it grows
-// a mouse hook.
+// Both hooks call this for navigation and shortcut keys; only macOS also has a
+// mouse hook feeding it clicks.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn reset() {
     with(|s| s.engine.reset());

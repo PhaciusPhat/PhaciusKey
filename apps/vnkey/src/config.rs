@@ -37,14 +37,26 @@ pub struct Settings {
     pub placement: Placement,
     /// Restore raw keystrokes for non-Vietnamese (e.g. English) words.
     pub auto_restore: bool,
+    /// Telex: a `w` that has no vowel to put a horn on types `ư` ("thw" →
+    /// "thư"). Standard in Unikey/OpenKey, so on by default.
+    pub standalone_w: bool,
+    /// Quick Telex: doubled consonants at word start expand ("cc" → "ch").
+    pub quick_telex: bool,
+    /// Quick start consonants: `f` → "ph", `j` → "gi", `w` → "qu" at word start.
+    pub quick_start_consonant: bool,
+    /// Quick end consonants: after a vowel, `g` → "ng", `h` → "nh", `k` → "ch".
+    pub quick_end_consonant: bool,
+    /// Capitalize the first letter of each sentence as it is typed.
+    pub auto_capitalize: bool,
     /// Download and install new releases automatically. Set false to go back to
     /// being notified only.
     pub auto_update: bool,
     /// Global shortcut that flips `enabled`, e.g. "ctrl+shift+v". Parsed with
     /// [`parse_shortcut`]; an unparseable string simply disables the shortcut.
     pub toggle_shortcut: String,
-    /// Register the app to launch at login (macOS LaunchAgent). Opt-in: the
-    /// user turns it on from the tray menu, it is never assumed.
+    /// Register the app to launch at login. Opt-in: the user turns it on from
+    /// the tray menu, it is never assumed. macOS owns the real state — this is
+    /// the user's request, reconciled against `SMAppService` at startup.
     pub start_at_login: bool,
     /// Apps (by name, case-insensitive) in which Vietnamese typing is off —
     /// keystrokes pass through untouched while one of these is focused.
@@ -57,6 +69,10 @@ pub struct Settings {
     ///
     /// [`enabled`]: Settings::enabled
     pub app_modes: BTreeMap<String, bool>,
+    /// Master switch for text expansion. Off hands the engine no macros at
+    /// all while keeping the list intact, so the feature can be parked without
+    /// losing what the user defined.
+    pub macros_enabled: bool,
     /// Text-expansion macros: word typed → text it becomes at the word
     /// boundary ("vd" → "ví dụ"). Matched against the on-screen word,
     /// case-sensitively.
@@ -64,6 +80,12 @@ pub struct Settings {
     /// Apps (by name, case-insensitive) that drop rapid synthetic keystrokes —
     /// injection pauses briefly between events while one of these is focused.
     pub slow_apps: Vec<String>,
+    /// Apps (by name, case-insensitive) whose inline autocomplete eats the
+    /// first injected Backspace, doubling letters ("dđ" instead of "đ").
+    /// Injection sends an invisible sentinel character first while one of
+    /// these is focused. Opt-in — see `with_autocomplete_fix` in the macOS
+    /// backend for why it is not simply on everywhere.
+    pub autocomplete_fix_apps: Vec<String>,
     /// Version that last ran. Compared against the running build at startup to
     /// notice that a self-update happened, so the user can be told.
     pub last_seen_version: Option<String>,
@@ -76,14 +98,21 @@ impl Default for Settings {
             method: Method::Telex,
             placement: Placement::Modern,
             auto_restore: true,
+            standalone_w: true,
+            quick_telex: false,
+            quick_start_consonant: false,
+            quick_end_consonant: false,
+            auto_capitalize: false,
             auto_update: true,
             toggle_shortcut: "ctrl+shift+v".into(),
             start_at_login: false,
             disabled_apps: Vec::new(),
             per_app_mode: false,
             app_modes: BTreeMap::new(),
+            macros_enabled: true,
             macros: BTreeMap::new(),
             slow_apps: Vec::new(),
+            autocomplete_fix_apps: Vec::new(),
             last_seen_version: None,
         }
     }
@@ -175,7 +204,15 @@ impl Settings {
             },
             enabled: self.vietnamese_on(app),
             auto_restore: self.auto_restore,
-            macros: self.macros.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            macros: match self.macros_enabled {
+                true => self.macros.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                false => Default::default(),
+            },
+            standalone_w: self.standalone_w,
+            quick_telex: self.quick_telex,
+            quick_start_consonant: self.quick_start_consonant,
+            quick_end_consonant: self.quick_end_consonant,
+            auto_capitalize: self.auto_capitalize,
         }
     }
 }
@@ -221,6 +258,141 @@ pub fn parse_shortcut(s: &str) -> Option<Shortcut> {
     // least one modifier and a main key.
     let has_modifier = sc.ctrl || sc.shift || sc.alt || sc.cmd;
     (sc.key != '\0' && has_modifier).then_some(sc)
+}
+
+/// Whether `trigger` can actually work as a macro trigger.
+///
+/// Macros are matched against one committed word, so a trigger containing
+/// whitespace could never fire — it would already have been committed at the
+/// space.
+pub fn valid_macro_trigger(trigger: &str) -> bool {
+    !trigger.is_empty() && !trigger.contains(char::is_whitespace)
+}
+
+/// Serialize macros for export: a plain JSON object of trigger → expansion.
+///
+/// JSON rather than the app's own TOML because an expansion may contain
+/// newlines, quotes and tabs, and this way their escaping is somebody else's
+/// solved problem. Pretty-printed so the file stays hand-editable.
+pub fn macro_export_json(macros: &BTreeMap<String, String>) -> String {
+    // A BTreeMap serializes in key order, so re-exporting an unchanged list
+    // produces an identical file rather than a spurious diff.
+    serde_json::to_string_pretty(macros).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// How an import changed the existing list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ImportOutcome {
+    pub added: usize,
+    pub updated: usize,
+}
+
+/// Parse an exported macro file into the entries worth keeping, along with how
+/// many rows were dropped as unusable.
+///
+/// Accepts a flat `{"vd": "ví dụ"}` object, or the same wrapped in a `macros`
+/// key. Individual bad rows are skipped rather than failing the whole import —
+/// one malformed line should not cost the user the rest of the file.
+pub fn parse_macro_export(text: &str) -> Result<(BTreeMap<String, String>, usize), String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| format!("not a valid JSON file: {e}"))?;
+
+    let table = match parsed.get("macros").filter(|m| m.is_object()) {
+        Some(inner) => inner,
+        None => &parsed,
+    };
+    let table = table
+        .as_object()
+        .ok_or_else(|| "expected a list of macros, e.g. {\"vd\": \"ví dụ\"}".to_string())?;
+
+    let mut macros = BTreeMap::new();
+    let mut skipped = 0;
+    for (trigger, expansion) in table {
+        let trigger = trigger.trim();
+        match expansion.as_str() {
+            Some(expansion) if valid_macro_trigger(trigger) => {
+                macros.insert(trigger.to_string(), expansion.to_string());
+            }
+            _ => skipped += 1,
+        }
+    }
+    Ok((macros, skipped))
+}
+
+/// Merge imported macros into the existing list, reporting what changed.
+///
+/// A merge and not a replacement: a file that simply does not mention one of
+/// the user's macros must not delete it.
+pub fn merge_macros(
+    into: &mut BTreeMap<String, String>,
+    incoming: BTreeMap<String, String>,
+) -> ImportOutcome {
+    let mut outcome = ImportOutcome::default();
+    for (trigger, expansion) in incoming {
+        match into.insert(trigger, expansion.clone()) {
+            None => outcome.added += 1,
+            // Re-importing an unchanged file should report nothing happened.
+            Some(previous) if previous != expansion => outcome.updated += 1,
+            Some(_) => {}
+        }
+    }
+    outcome
+}
+
+/// Turn a recorded key press into the canonical shortcut string
+/// (`"ctrl+shift+v"`), or `None` when the combination cannot be used.
+///
+/// `code` is the browser's `KeyboardEvent.code` — the *physical* key, so the
+/// recorded shortcut is the one the user's fingers pressed regardless of
+/// layout or of what the modifiers turn the character into (Option+V is `√`,
+/// Shift+V is `V`). That matches the hook, which compares physical key codes.
+///
+/// Refused: a combination with no modifier, which would fire on ordinary
+/// typing, and any key the hook's `keycode_for` cannot map — storing one would
+/// give the user a shortcut that silently never fires.
+pub fn shortcut_from_event(ctrl: bool, alt: bool, shift: bool, cmd: bool, code: &str) -> Option<String> {
+    if !(ctrl || alt || shift || cmd) {
+        return None;
+    }
+    let key = match code.as_bytes() {
+        [b'K', b'e', b'y', c] if c.is_ascii_uppercase() => c.to_ascii_lowercase() as char,
+        [b'D', b'i', b'g', b'i', b't', d] if d.is_ascii_digit() => *d as char,
+        _ if code == "Space" => ' ',
+        _ => return None,
+    };
+
+    let mut parts: Vec<&str> = Vec::new();
+    for (held, name) in [(ctrl, "ctrl"), (alt, "alt"), (shift, "shift"), (cmd, "cmd")] {
+        if held {
+            parts.push(name);
+        }
+    }
+    let key = if key == ' ' { "space".to_string() } else { key.to_string() };
+    parts.push(&key);
+    Some(parts.join("+"))
+}
+
+/// Render a shortcut for display as macOS glyphs: `"ctrl+shift+v"` → `"⌃⇧V"`.
+///
+/// Anything [`parse_shortcut`] rejects is handed back unchanged — `config.toml`
+/// is hand-editable, and a bad value has to stay readable to be fixable.
+pub fn shortcut_display(shortcut: &str) -> String {
+    let Some(sc) = parse_shortcut(shortcut) else {
+        return shortcut.to_string();
+    };
+    let mut out = String::new();
+    // The conventional macOS order, which is not the order they were typed in.
+    for (held, glyph) in [(sc.ctrl, '⌃'), (sc.alt, '⌥'), (sc.shift, '⇧'), (sc.cmd, '⌘')] {
+        if held {
+            out.push(glyph);
+        }
+    }
+    if sc.key == ' ' {
+        out.push_str("Space");
+    } else {
+        out.extend(sc.key.to_uppercase());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -285,6 +457,149 @@ mod tests {
         settings.set_app_mode("safari", true);
         assert!(settings.vietnamese_on(Some("Safari")));
         assert!(settings.disabled_apps.is_empty());
+    }
+
+    fn macros(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn exported_macros_come_back_unchanged() {
+        let original = macros(&[("vd", "ví dụ"), ("btw", "by the way")]);
+        let (parsed, skipped) = parse_macro_export(&macro_export_json(&original)).unwrap();
+        assert_eq!(parsed, original);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn an_expansion_with_newlines_and_quotes_survives_the_round_trip() {
+        // JSON is the format precisely so these do not need escaping rules of
+        // our own — but that only holds if it actually round-trips.
+        let original = macros(&[("sig", "Regards,\n\"Phát\"\tPhacius")]);
+        let (parsed, _) = parse_macro_export(&macro_export_json(&original)).unwrap();
+        assert_eq!(parsed, original);
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_macro_list_is_an_error() {
+        assert!(parse_macro_export("not json at all").is_err());
+        assert!(parse_macro_export("[1, 2, 3]").is_err());
+        assert!(parse_macro_export("\"just a string\"").is_err());
+    }
+
+    #[test]
+    fn a_config_style_wrapper_is_accepted() {
+        // Someone pasting the `[macros]` table out of config.toml, converted,
+        // gets a nested object — worth accepting rather than rejecting.
+        let (parsed, _) = parse_macro_export(r#"{"macros": {"vd": "ví dụ"}}"#).unwrap();
+        assert_eq!(parsed, macros(&[("vd", "ví dụ")]));
+    }
+
+    #[test]
+    fn unusable_entries_are_skipped_rather_than_failing_the_import() {
+        // A trigger with whitespace can never commit as one word, and a
+        // non-string value is not an expansion. One bad row must not cost the
+        // user the rest of the file.
+        let (parsed, skipped) = parse_macro_export(
+            r#"{"vd": "ví dụ", "two words": "x", "": "y", "n": 5, "  ": "z"}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed, macros(&[("vd", "ví dụ")]));
+        assert_eq!(skipped, 4);
+    }
+
+    #[test]
+    fn a_trigger_is_trimmed_before_it_is_stored() {
+        let (parsed, skipped) = parse_macro_export(r#"{" vd ": "ví dụ"}"#).unwrap();
+        assert_eq!(parsed, macros(&[("vd", "ví dụ")]));
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn importing_adds_and_overwrites_without_dropping_what_is_there() {
+        // Import is a merge, not a replacement: nothing the user already had
+        // disappears because a file did not mention it.
+        let mut existing = macros(&[("vd", "ví dụ"), ("keep", "kept")]);
+        let outcome = merge_macros(&mut existing, macros(&[("vd", "changed"), ("new", "added")]));
+
+        assert_eq!(existing, macros(&[("vd", "changed"), ("keep", "kept"), ("new", "added")]));
+        assert_eq!((outcome.added, outcome.updated), (1, 1));
+    }
+
+    #[test]
+    fn reimporting_the_same_file_changes_nothing() {
+        let mut existing = macros(&[("vd", "ví dụ")]);
+        let outcome = merge_macros(&mut existing, macros(&[("vd", "ví dụ")]));
+        assert_eq!(existing, macros(&[("vd", "ví dụ")]));
+        assert_eq!((outcome.added, outcome.updated), (0, 0));
+    }
+
+    #[test]
+    fn a_recorded_key_press_becomes_a_canonical_shortcut() {
+        assert_eq!(
+            shortcut_from_event(true, false, true, false, "KeyV").as_deref(),
+            Some("ctrl+shift+v")
+        );
+        assert_eq!(
+            shortcut_from_event(false, false, false, true, "Space").as_deref(),
+            Some("cmd+space")
+        );
+        assert_eq!(shortcut_from_event(false, true, false, false, "Digit1").as_deref(), Some("alt+1"));
+    }
+
+    #[test]
+    fn a_recorded_combination_needs_a_modifier() {
+        // A bare letter would fire on ordinary typing, so the recorder must
+        // refuse it rather than store a shortcut that eats the keyboard.
+        assert_eq!(shortcut_from_event(false, false, false, false, "KeyV"), None);
+    }
+
+    #[test]
+    fn keys_the_hook_cannot_match_are_refused() {
+        // `keycode_for` in the macOS hook maps letters, digits and space only;
+        // anything else would be stored and then silently never fire.
+        assert_eq!(shortcut_from_event(true, false, false, false, "F5"), None);
+        assert_eq!(shortcut_from_event(true, false, false, false, "Slash"), None);
+        assert_eq!(shortcut_from_event(true, false, false, false, "Enter"), None);
+    }
+
+    #[test]
+    fn everything_the_recorder_produces_parses_back() {
+        // The recorder and the reader must not drift apart — whatever is
+        // recorded has to survive a round trip through `parse_shortcut`.
+        for code in ["KeyA", "KeyZ", "Digit0", "Digit9", "Space"] {
+            let recorded = shortcut_from_event(true, true, true, true, code)
+                .unwrap_or_else(|| panic!("{code} should record"));
+            assert!(parse_shortcut(&recorded).is_some(), "{recorded} should parse");
+        }
+    }
+
+    #[test]
+    fn shortcuts_are_shown_as_mac_glyphs() {
+        assert_eq!(shortcut_display("ctrl+shift+v"), "⌃⇧V");
+        assert_eq!(shortcut_display("cmd+space"), "⌘Space");
+        // Glyph order is the macOS convention, not the order they were typed.
+        assert_eq!(shortcut_display("cmd+ctrl+alt+shift+k"), "⌃⌥⇧⌘K");
+    }
+
+    #[test]
+    fn an_unparseable_shortcut_is_shown_as_written() {
+        // `config.toml` is hand-editable; a broken value must stay visible so
+        // the user can see what to fix rather than an empty box.
+        assert_eq!(shortcut_display("hyper+v"), "hyper+v");
+    }
+
+    #[test]
+    fn turning_macros_off_hides_them_from_the_engine() {
+        let mut settings = Settings::default();
+        settings.macros.insert("vd".into(), "ví dụ".into());
+        assert_eq!(settings.to_core(None).macros.len(), 1);
+
+        settings.macros_enabled = false;
+        // The engine is handed none, but the list itself survives — switching
+        // the feature back on must not cost the user their macros.
+        assert!(settings.to_core(None).macros.is_empty());
+        assert_eq!(settings.macros.len(), 1);
     }
 
     #[test]

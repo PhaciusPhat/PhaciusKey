@@ -125,7 +125,20 @@
   }
   input[type=text]:focus { border-color: rgba(56,225,169,.5); }
   input[type=text].bad { border-color: rgba(255,110,110,.6); }
-  #shortcut { width: 150px; text-align: center; }
+  /* Shortcut recorder: click to arm, then press the combination. */
+  .rec {
+    appearance: none; font: inherit; cursor: pointer;
+    min-width: 150px; padding: 6px 10px; text-align: center;
+    background: rgba(255,255,255,.06); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--ink);
+    font-family: ui-monospace, "SF Mono", monospace; font-size: 13px;
+  }
+  .rec:hover { background: rgba(255,255,255,.12); }
+  .rec:focus-visible { outline: 2px solid var(--jade); outline-offset: 2px; }
+  .rec.rec-on {
+    border-color: var(--jade); background: var(--jade-soft); color: var(--jade);
+  }
+  .rec.bad { border-color: rgba(255,110,110,.6); }
 
   button.btn {
     appearance: none; font: inherit; font-size: 12.5px; cursor: pointer;
@@ -155,10 +168,28 @@
   .addrow input { flex: 1; }
 
   .foot { display: flex; gap: 8px; justify-content: flex-end; padding: 0 2px; }
+  .pair { display: flex; gap: 8px; flex: none; }
+
+  /* Import/export result, shown once per action. */
+  #toast {
+    position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 14px);
+    max-width: min(560px, calc(100vw - 40px));
+    padding: 9px 15px; border-radius: 10px;
+    background: rgba(14,20,34,.94); border: 1px solid var(--border);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    box-shadow: 0 12px 32px rgba(2,5,12,.5);
+    color: var(--ink); font-size: 12.5px; line-height: 1.45;
+    opacity: 0; pointer-events: none; z-index: 10;
+    transition: opacity .18s ease, transform .18s ease;
+    overflow-wrap: anywhere;
+  }
+  #toast.on { opacity: 1; transform: translate(-50%, 0); }
+  @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
 </style>
 </head>
 <body>
   <div class="aurora"><span class="a1"></span><span class="a2"></span><span class="a3"></span></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 
   <div class="wrap">
     <header class="glass top">
@@ -195,19 +226,55 @@
         <label class="sw"><input type="checkbox" id="auto_restore"><i></i></label>
       </div>
       <div class="row">
-        <div class="lbl"><b>Toggle shortcut</b><small>Flips Vietnamese typing anywhere, e.g. ctrl+shift+v</small></div>
-        <input type="text" id="shortcut" spellcheck="false" autocomplete="off">
+        <div class="lbl"><b>Capitalize sentences</b><small>First letter after “.”, “!” or “?” goes uppercase</small></div>
+        <label class="sw"><input type="checkbox" id="auto_capitalize"><i></i></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Toggle shortcut</b><small id="shortcut-hint">Flips Vietnamese typing anywhere</small></div>
+        <button type="button" id="shortcut" class="rec"></button>
+      </div>
+    </section>
+
+    <section class="glass" id="telex-section">
+      <h2>Telex shortcuts</h2>
+      <div class="row">
+        <div class="lbl"><b>Standalone “w” types “ư”</b><small>“thw” gives “thư”. Standard in Unikey</small></div>
+        <label class="sw"><input type="checkbox" id="standalone_w"><i></i></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Quick Telex</b><small>Doubled consonants expand: “cc” → “ch”, “nn” → “ng”</small></div>
+        <label class="sw"><input type="checkbox" id="quick_telex"><i></i></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Quick start consonants</b><small>“f” → “ph”, “j” → “gi”, “w” → “qu” at the start of a word</small></div>
+        <label class="sw"><input type="checkbox" id="quick_start_consonant"><i></i></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Quick end consonants</b><small>After a vowel, “g” → “ng”, “h” → “nh”, “k” → “ch”</small></div>
+        <label class="sw"><input type="checkbox" id="quick_end_consonant"><i></i></label>
       </div>
     </section>
 
     <section class="glass">
       <h2>Macros</h2>
+      <div class="row">
+        <div class="lbl"><b>Expand macros</b><small>Turn off to park the feature — your list is kept</small></div>
+        <label class="sw"><input type="checkbox" id="macros_enabled"><i></i></label>
+      </div>
       <div id="macros"></div>
       <div class="addrow">
         <input type="text" id="mtrig" placeholder="Shortcut, e.g. vd" spellcheck="false" autocomplete="off">
         <input type="text" id="mexp" placeholder="Expands to, e.g. ví dụ" spellcheck="false" autocomplete="off">
         <button class="btn" id="maddbtn">Add macro</button>
       </div>
+      <div class="row">
+        <div class="lbl"><b>Backup</b><small>Export saves to Downloads. Import merges — nothing you have is removed</small></div>
+        <div class="pair">
+          <button class="btn" id="mexport">Export…</button>
+          <button class="btn" id="mimport">Import…</button>
+        </div>
+      </div>
+      <input type="file" id="mfile" accept="application/json,.json" hidden>
     </section>
 
     <section class="glass">
@@ -233,6 +300,14 @@
       <div class="addrow">
         <input type="text" id="slowname" list="applist" placeholder="Search installed apps, e.g. IntelliJ IDEA" spellcheck="false" autocomplete="off">
         <button class="btn" id="slowbtn">Enable slow typing</button>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Autocomplete fix</b><small>For address bars and cells that complete as you type and double your letters (“dđ”)</small></div>
+      </div>
+      <div id="acapps"></div>
+      <div class="addrow">
+        <input type="text" id="acname" list="applist" placeholder="Search installed apps, e.g. Safari" spellcheck="false" autocomplete="off">
+        <button class="btn" id="acbtn">Enable autocomplete fix</button>
       </div>
     </section>
 
@@ -263,7 +338,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   // ---- Simple controls → commands ----
-  ["enabled", "auto_restore", "per_app_mode", "start_at_login", "auto_update"].forEach(function (key) {
+  ["enabled", "auto_restore", "per_app_mode", "start_at_login", "auto_update", "auto_capitalize", "standalone_w", "quick_telex", "quick_start_consonant", "quick_end_consonant", "macros_enabled"].forEach(function (key) {
     $(key).addEventListener("change", function () {
       send({ cmd: "set", key: key, value: this.checked });
     });
@@ -276,12 +351,97 @@
     });
   });
 
+  // ---- Shortcut recorder ----
+  // Click to arm, then press the combination you want. The page never invents
+  // a shortcut string: it reports the raw event fields and Rust canonicalises
+  // them, so what is stored is always something the keyboard hook can match.
   var shortcut = $("shortcut");
-  var commitShortcut = function () {
-    send({ cmd: "set", key: "toggle_shortcut", value: shortcut.value.trim() });
-  };
-  shortcut.addEventListener("change", commitShortcut);
-  shortcut.addEventListener("keydown", function (e) { if (e.key === "Enter") this.blur(); });
+  var shortcutHint = $("shortcut-hint");
+  var recording = false;
+  var lastDisplay = "";
+  var lastHint = shortcutHint.textContent;
+
+  var MODS = ["\u2303", "\u2325", "\u21E7", "\u2318"]; // control, option, shift, command
+
+  function heldGlyphs(e) {
+    var held = [e.ctrlKey, e.altKey, e.shiftKey, e.metaKey];
+    return MODS.filter(function (_, i) { return held[i]; }).join("");
+  }
+
+  function setHint(text) { shortcutHint.textContent = text; }
+
+  function startRecording() {
+    if (recording) return stopRecording();
+    recording = true;
+    shortcut.classList.add("rec-on");
+    shortcut.focus();
+    shortcut.textContent = "Press keys\u2026";
+    setHint("Hold a modifier and press a letter, digit or space. Esc cancels.");
+    // Hold the current shortcut back, or every attempt would toggle typing.
+    send({ cmd: "shortcut_record", on: true });
+  }
+
+  function stopRecording() {
+    if (!recording) return;
+    recording = false;
+    shortcut.classList.remove("rec-on");
+    shortcut.textContent = lastDisplay;
+    setHint(lastHint);
+    send({ cmd: "shortcut_record", on: false });
+  }
+
+  shortcut.addEventListener("click", startRecording);
+
+  // Clicking anywhere else disarms. WebKit does not reliably focus a <button>
+  // on click, so a blur handler alone would never fire here.
+  document.addEventListener("mousedown", function (e) {
+    if (recording && e.target !== shortcut) stopRecording();
+  }, true);
+
+  // Listening on the document, in the capture phase, for the same reason: the
+  // button may never hold focus, and the keys must not reach the page either.
+  document.addEventListener("keydown", function (e) {
+    if (!recording) {
+      // Keyboard users need a way in that is not a mouse click.
+      if (document.activeElement === shortcut && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        startRecording();
+      }
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.key === "Escape") return stopRecording();
+
+    // A modifier on its own is not a shortcut yet — show what is held so far.
+    if (["Control", "Alt", "Shift", "Meta"].indexOf(e.key) !== -1) {
+      shortcut.textContent = (heldGlyphs(e) || "Press keys") + "\u2026";
+      return;
+    }
+
+    var usable = /^Key[A-Z]$/.test(e.code) || /^Digit[0-9]$/.test(e.code) || e.code === "Space";
+    if (!usable) {
+      setHint("That key can\u2019t be used — pick a letter, a digit or space.");
+      return;
+    }
+    if (!(e.ctrlKey || e.altKey || e.shiftKey || e.metaKey)) {
+      setHint("Add a modifier — a bare key would fire while you type.");
+      return;
+    }
+
+    send({
+      cmd: "shortcut_capture",
+      code: e.code,
+      ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, cmd: e.metaKey,
+    });
+    stopRecording();
+  }, true);
+
+  // Key releases must not leak to the page either while the recorder is armed.
+  document.addEventListener("keyup", function (e) {
+    if (recording) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
 
   var addname = $("addname");
   var addApp = function () {
@@ -313,6 +473,44 @@
   $("slowbtn").addEventListener("click", addSlow);
   slowname.addEventListener("keydown", function (e) { if (e.key === "Enter") addSlow(); });
 
+  var acname = $("acname");
+  var addAc = function () {
+    var name = acname.value.trim();
+    if (!name) return;
+    acname.value = "";
+    send({ cmd: "autocomplete_app", name: name, on: true });
+  };
+  $("acbtn").addEventListener("click", addAc);
+  acname.addEventListener("keydown", function (e) { if (e.key === "Enter") addAc(); });
+
+  // ---- Macro import / export ----
+  // Export is written by the app (and revealed in Finder); import goes through
+  // a file input so the picker is the system's, then hands the *text* over —
+  // the page never parses or validates a macro file itself.
+  $("mexport").addEventListener("click", function () { send({ cmd: "macros_export" }); });
+
+  var mfile = $("mfile");
+  $("mimport").addEventListener("click", function () { mfile.click(); });
+  mfile.addEventListener("change", function () {
+    var file = this.files && this.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () { send({ cmd: "macros_import", text: String(reader.result) }); };
+    reader.onerror = function () { showToast("Could not read that file."); };
+    reader.readAsText(file);
+    // Clear it, so picking the same file twice in a row still fires `change`.
+    this.value = "";
+  });
+
+  var toast = $("toast");
+  var toastTimer = null;
+  function showToast(text) {
+    toast.textContent = text;
+    toast.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.classList.remove("on"); }, 5000);
+  }
+
   $("open_config").addEventListener("click", function () { send({ cmd: "open_config" }); });
   $("forget").addEventListener("click", function () { send({ cmd: "forget_apps" }); });
 
@@ -339,7 +537,7 @@
   window.__setState = function (s) {
     $("version").textContent = "v" + s.version;
     renderInstalled(s.installed_apps || []);
-    ["enabled", "auto_restore", "per_app_mode", "start_at_login", "auto_update"].forEach(function (key) {
+    ["enabled", "auto_restore", "per_app_mode", "start_at_login", "auto_update", "auto_capitalize", "standalone_w", "quick_telex", "quick_start_consonant", "quick_end_consonant", "macros_enabled"].forEach(function (key) {
       $(key).checked = !!s[key];
     });
     ["method", "placement"].forEach(function (key) {
@@ -347,8 +545,12 @@
         b.classList.toggle("on", b.dataset.v === s[key]);
       });
     });
-    if (document.activeElement !== shortcut) shortcut.value = s.toggle_shortcut;
+    if (s.notice) showToast(s.notice);
+
+    lastDisplay = s.shortcut_display || s.toggle_shortcut;
+    if (!recording) shortcut.textContent = lastDisplay;
     shortcut.classList.toggle("bad", !s.shortcut_valid);
+    shortcut.title = s.toggle_shortcut;
 
     var box = $("apps");
     if (!s.apps.length) {
@@ -410,6 +612,25 @@
       Array.prototype.forEach.call(sbox.querySelectorAll("button.rm"), function (el) {
         el.addEventListener("click", function () {
           send({ cmd: "slow_app", name: this.dataset.name, on: false });
+        });
+      });
+    }
+
+    var abox = $("acapps");
+    var acs = s.autocomplete_fix_apps || [];
+    if (!acs.length) {
+      abox.innerHTML = '<div class="empty">No apps listed — only add one if it doubles letters ' +
+                       'while you type.</div>';
+    } else {
+      abox.innerHTML = acs.map(function (name) {
+        return '<div class="row">' +
+          '<div class="lbl"><b>' + esc(name) + "</b></div>" +
+          '<button class="rm" title="Back to normal injection" data-name="' + esc(name) + '">\u2715</button>' +
+          "</div>";
+      }).join("");
+      Array.prototype.forEach.call(abox.querySelectorAll("button.rm"), function (el) {
+        el.addEventListener("click", function () {
+          send({ cmd: "autocomplete_app", name: this.dataset.name, on: false });
         });
       });
     }

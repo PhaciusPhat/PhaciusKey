@@ -291,7 +291,13 @@ unsafe extern "C" fn tap_callback(
     // expansion into the stream *before* the returned event, so the edit
     // lands ahead of the Enter/Tab.
     if matches!(keycode, VK_RETURN | VK_KP_ENTER | VK_TAB) {
-        let actions = state::commit_word();
+        // Enter ends the line, so the next word opens a sentence; Tab commits
+        // a word without ending anything.
+        let actions = if keycode == VK_TAB {
+            state::commit_word()
+        } else {
+            state::commit_line()
+        };
         if !actions.is_empty() {
             let _ = inject(proxy, &actions);
         }
@@ -335,6 +341,12 @@ unsafe extern "C" fn tap_callback(
 /// `CGEventKeyboardGetUnicodeString` reports control characters, not letters.
 /// The modifier set must match exactly, so ⌃⇧V never also fires on ⌘⌃⇧V.
 fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
+    // While the settings window is recording a replacement, the combination
+    // being pressed is aimed at the recorder — acting on it would flip
+    // Vietnamese typing on every attempt.
+    if state::shortcut_recording() {
+        return false;
+    }
     let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
         return false;
     };
@@ -470,10 +482,56 @@ unsafe fn read_char(event: CGEventRefRaw) -> Option<char> {
 /// Every event is built before any is posted, so a mid-sequence creation
 /// failure falls back to the untouched keystroke rather than a half-applied
 /// edit.
+/// U+202F NARROW NO-BREAK SPACE — the sentinel OpenKey and XKey both use for
+/// the workaround below. It is invisible, and no app treats it as a word
+/// boundary the way a plain space would be.
+const AUTOCOMPLETE_SENTINEL: &str = "\u{202F}";
+
+/// Work around inline autocomplete eating the first injected Backspace.
+///
+/// Address bars and spreadsheet cells complete as you type and leave the
+/// suggestion *selected* after the caret. Our first Backspace deletes that
+/// selection rather than the character it meant to remove, so the replacement
+/// lands beside the original: typing "dd" gives "dđ" instead of "đ". Sending a
+/// throwaway character first makes the app commit and clear its suggestion,
+/// and one extra Backspace takes the sentinel away again.
+///
+/// Only worth doing when we are about to delete something — a plain insert has
+/// no Backspace to lose.
+///
+/// This is opt-in per app rather than always on, because it is not free.
+/// OpenKey enables it globally and its own issue tracker records the cost:
+/// Chrome on macOS holds its suggestion long enough that the sentinel is eaten
+/// too, and a sentinel that survives is visible corruption in the text.
+fn with_autocomplete_fix(actions: &[EditAction]) -> Vec<EditAction> {
+    let Some(EditAction::Backspace(count)) = actions.first() else {
+        return actions.to_vec();
+    };
+    // The sentinel needs one more Backspace to clear it; if the count is
+    // already at the ceiling, leave the batch alone rather than truncating it.
+    let Some(count) = count.checked_add(1) else {
+        return actions.to_vec();
+    };
+
+    let mut out = Vec::with_capacity(actions.len() + 1);
+    out.push(EditAction::Insert(AUTOCOMPLETE_SENTINEL.to_string()));
+    out.push(EditAction::Backspace(count));
+    out.extend_from_slice(&actions[1..]);
+    out
+}
+
 fn inject(proxy: CGEventTapProxy, actions: &[EditAction]) -> bool {
     let source = match CGEventSource::new(CGEventSourceStateID::HIDSystemState) {
         Ok(s) => s,
         Err(_) => return false,
+    };
+
+    let patched;
+    let actions = if state::autocomplete_fix_here() {
+        patched = with_autocomplete_fix(actions);
+        &patched[..]
+    } else {
+        actions
     };
 
     let mut events: Vec<CGEvent> = Vec::new();
@@ -550,6 +608,35 @@ pub(super) fn request_accessibility_permission(prompt: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autocomplete_fix_prefixes_a_sentinel_and_deletes_it_again() {
+        // The sentinel is typed first, so the count has to grow by one to
+        // clear it along with the characters being replaced.
+        let actions = vec![EditAction::Backspace(2), EditAction::Insert("đ".into())];
+        assert_eq!(
+            with_autocomplete_fix(&actions),
+            vec![
+                EditAction::Insert(AUTOCOMPLETE_SENTINEL.to_string()),
+                EditAction::Backspace(3),
+                EditAction::Insert("đ".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn autocomplete_fix_leaves_a_plain_insert_alone() {
+        // No Backspace means no suggestion can eat one — a sentinel here would
+        // just be an invisible character left in the text.
+        let actions = vec![EditAction::Insert("a".into())];
+        assert_eq!(with_autocomplete_fix(&actions), actions);
+    }
+
+    #[test]
+    fn autocomplete_fix_declines_a_batch_at_the_backspace_ceiling() {
+        let actions = vec![EditAction::Backspace(u8::MAX), EditAction::Insert("x".into())];
+        assert_eq!(with_autocomplete_fix(&actions), actions);
+    }
 
     #[test]
     fn collects_app_bundles_one_folder_deep() {

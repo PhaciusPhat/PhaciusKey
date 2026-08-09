@@ -1,10 +1,10 @@
-use crate::types::Tone;
+use crate::types::{Config, Tone};
 use super::{InputMethodProcessor, MethodResult};
 
 pub struct VniMethod;
 
 impl InputMethodProcessor for VniMethod {
-    fn process(&self, raw: &str) -> Option<MethodResult> {
+    fn process(&self, raw: &str, _config: &Config) -> Option<MethodResult> {
         if raw.is_empty() {
             return None;
         }

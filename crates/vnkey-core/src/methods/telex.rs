@@ -1,15 +1,15 @@
-use crate::types::Tone;
+use crate::types::{Config, Tone};
 use crate::validator::is_valid_prefix;
 use super::{InputMethodProcessor, MethodResult};
 
 pub struct TelexMethod;
 
 impl InputMethodProcessor for TelexMethod {
-    fn process(&self, raw: &str) -> Option<MethodResult> {
+    fn process(&self, raw: &str, config: &Config) -> Option<MethodResult> {
         if raw.is_empty() {
             return None;
         }
-        Some(process_telex(raw))
+        Some(process_telex(raw, config))
     }
 }
 
@@ -22,9 +22,9 @@ impl InputMethodProcessor for TelexMethod {
 ///     s → sắc, f → huyền, r → hỏi, x → ngã, j → nặng, z → ngang (remove)
 ///   Undo: pressing a diacritic or tone key again undoes it and types the key
 ///     literally — "aaa" → "aa", "ass" → "as".
-pub fn process_telex(raw: &str) -> MethodResult {
+pub fn process_telex(raw: &str, config: &Config) -> MethodResult {
     // Work character by character, maintaining a mutable state.
-    let mut state = TelexState::default();
+    let mut state = TelexState { config: config.clone(), ..Default::default() };
     for ch in raw.chars() {
         state.push(ch);
     }
@@ -33,6 +33,8 @@ pub fn process_telex(raw: &str) -> MethodResult {
 
 #[derive(Default)]
 struct TelexState {
+    /// Which optional typing conventions are switched on.
+    config: Config,
     /// Accumulated bare consonants + vowels (no tone mark).
     syllable: String,
     /// Current tone.
@@ -49,12 +51,45 @@ struct TelexState {
     /// the replaced character's flag (the doubling key only enriches what is
     /// already on screen), so the mask always stays in step with `syllable`.
     mask: Vec<bool>,
+    /// Which `syllable` position, if any, holds an `ư` the standalone rule
+    /// produced (OpenKey's `STANDALONE_MASK`). The two ways to get an `ư` undo
+    /// differently — a typed "uw" goes back to "uw", a lone 'w' goes back to
+    /// 'w' — and the character on screen cannot tell them apart.
+    standalone_w: Option<usize>,
 }
 
 impl TelexState {
     fn push(&mut self, ch: char) {
+        self.push_key(ch);
+        // The marker names a position, and nearly every rule in `push_key` may
+        // rewrite the syllable underneath it — a later horn key turning "ưo"
+        // into "ươ", say. Re-reading the position once, here, is cheaper than
+        // threading invalidation through each of those paths and cannot miss
+        // one of them.
+        if let Some(pos) = self.standalone_w {
+            if self.syllable.chars().nth(pos) != Some('ư') {
+                self.standalone_w = None;
+            }
+        }
+    }
+
+    fn push_key(&mut self, ch: char) {
         self.raw.push(ch);
         let lower = ch.to_lowercase().next().unwrap_or(ch);
+
+        // --- Quick Telex ---
+        // A doubled consonant stands for the digraph it opens: "cc" is "ch",
+        // "nn" is "ng". First of all the rules because none of c/g/k/n/q/p/t is
+        // a tone key or half of a diacritic pair, so nothing below has a claim
+        // on these keystrokes — and because the rule reads the character the
+        // key lands on, which the paths below are free to have rewritten.
+        if self.config.quick_telex {
+            if let Some(completion) = quick_telex_completion(&self.syllable, lower) {
+                self.syllable.push(completion);
+                self.mask.push(ch.is_uppercase());
+                return;
+            }
+        }
 
         // --- Tone key? ---
         if let Some(tone) = tone_key(lower) {
@@ -108,6 +143,25 @@ impl TelexState {
             }
         }
 
+        // --- A second 'w' takes back a standalone one ---
+        // Must come before the pairs below, where ('ư', 'w') restores "uw" —
+        // right for an 'ư' the user built out of "uw", wrong for one the 'w'
+        // key produced on its own, which owes the user back a single 'w'.
+        if lower == 'w'
+            && self.standalone_w.is_some_and(|pos| pos + 1 == self.syllable.chars().count())
+        {
+            self.syllable.pop();
+            self.syllable.push('w');
+            // One character became one character, so the mask keeps its length.
+            // The 'w' now on screen is the key just pressed, and takes that
+            // key's case rather than the case of the 'ư' it replaced.
+            if let Some(flag) = self.mask.last_mut() {
+                *flag = ch.is_uppercase();
+            }
+            self.cancelled = true;
+            return;
+        }
+
         // --- Diacritic pair? ---
         if let Some(replacement) = diacritic_pair(&self.syllable, lower) {
             match replacement {
@@ -135,6 +189,17 @@ impl TelexState {
                 self.syllable = new_syl;
                 return;
             }
+        }
+
+        // --- Standalone 'w' → 'ư' ---
+        // A 'w' with no vowel to horn is the Unikey/OpenKey shorthand for 'ư'
+        // itself, so "w" is "ư" and "thw" is "thư". Only reachable once the
+        // horn logic above has declined the key.
+        if lower == 'w' && self.config.standalone_w && standalone_w_applies(&self.syllable) {
+            self.standalone_w = Some(self.syllable.chars().count());
+            self.syllable.push('ư');
+            self.mask.push(ch.is_uppercase());
+            return;
         }
 
         // --- Doubling vowel after the coda ---
@@ -316,6 +381,80 @@ fn diacritic_pair(syllable: &str, ch: char) -> Option<PairResult> {
     }
 }
 
+// ── Quick Telex ──────────────────────────────────────────────────────────────
+
+/// The letter that finishes the digraph a doubled consonant stands for:
+/// "c" + 'c' is "ch", so the answer is 'h'. `None` when `ch` is not doubling
+/// one of OpenKey's seven quick-Telex consonants.
+///
+/// Every row of OpenKey's table repeats the doubled letter as the first letter
+/// of its digraph, so the expansion only ever *appends*. That is what keeps the
+/// letter already on screen — and its entry in the case mask — exactly as the
+/// user typed it: "Cc" gives "Ch", never "ch". The appended letter takes the
+/// case of the keypress that asked for it.
+fn quick_telex_completion(syllable: &str, ch: char) -> Option<char> {
+    // `syllable` is stored lowercased, and `ch` arrives lowercased, so this
+    // comparison is the case-insensitive match OpenKey does.
+    if syllable.chars().last()? != ch {
+        return None;
+    }
+    match ch {
+        'c' => Some('h'),
+        'g' => Some('i'),
+        'k' => Some('h'),
+        'n' => Some('g'),
+        'q' => Some('u'),
+        'p' => Some('h'),
+        't' => Some('h'),
+        // OpenKey's table has a "uu" → "ươ" row, but `IS_QUICK_TELEX_KEY` never
+        // lets a 'u' reach it — the row is dead code, so it is not copied here.
+        _ => None,
+    }
+}
+
+// ── Standalone 'w' ───────────────────────────────────────────────────────────
+
+/// The letter under any mark: 'ê' → 'e'. The syllable carries no tone (that
+/// lives in `TelexState::tone`), so only the seven mark-bearing letters need
+/// folding — which is what OpenKey's `CHR()` masking amounts to here.
+fn base_letter(c: char) -> char {
+    match c {
+        'â' | 'ă' => 'a',
+        'ê' => 'e',
+        'ô' | 'ơ' => 'o',
+        'ư' => 'u',
+        'đ' => 'd',
+        other => other,
+    }
+}
+
+/// Whether a `w` that found no vowel to horn should type `ư` (OpenKey's
+/// `checkForStandaloneChar`). `syllable` is everything composed so far.
+fn standalone_w_applies(syllable: &str) -> bool {
+    let so_far: Vec<char> = syllable.chars().map(base_letter).collect();
+    match so_far.len() {
+        // Opening the syllable: 'ư' is the only thing a lone 'w' can mean.
+        0 => true,
+        // One onset letter in front — but 'e'/'y' are vowels that never sit
+        // before 'ư', and 'k' has no "kư" (that word is spelt "cư"). The
+        // remaining four are the Telex tone keys, which reached the syllable
+        // as literal letters, so "fw"/"jw"/"zw" are somebody typing English.
+        1 => !matches!(so_far[0], 'w' | 'e' | 'y' | 'f' | 'j' | 'k' | 'z'),
+        // Two letters in, only a real Vietnamese digraph onset can still be
+        // waiting for its nucleus ("thư", "ngư"); "plw"/"stw" are English.
+        2 => {
+            let onset: String = so_far.iter().collect();
+            matches!(
+                onset.as_str(),
+                "tr" | "th" | "ch" | "nh" | "ng" | "kh" | "gi" | "ph" | "gh"
+            )
+        }
+        // Three letters is already a full onset plus something, and "ngh" —
+        // the only three-letter onset — has no "nghư". OpenKey stops here too.
+        _ => false,
+    }
+}
+
 fn has_vowel(s: &str) -> bool {
     s.chars().any(is_vowel)
 }
@@ -377,8 +516,87 @@ mod tests {
     use crate::types::Tone;
 
     fn telex(s: &str) -> (String, Tone) {
-        let r = process_telex(s);
+        let r = process_telex(s, &Config::default());
         (r.bare, r.tone)
+    }
+
+    fn telex_with(config: &Config, s: &str) -> String {
+        process_telex(s, config).bare
+    }
+
+    #[test]
+    fn standalone_w_with_nothing_typed_yet() {
+        assert_eq!(telex("w").0, "ư");
+    }
+
+    #[test]
+    fn standalone_w_after_one_character() {
+        // A single onset letter takes the 'ư'...
+        assert_eq!(telex("tw").0, "tư");
+        assert_eq!(telex("nw").0, "nư");
+        assert_eq!(telex("mw").0, "mư");
+        // ...unless it is one of OpenKey's `_standaloneWbad` letters, none of
+        // which opens a syllable in front of 'ư'.
+        assert_eq!(telex("kw").0, "kw");
+        assert_eq!(telex("zw").0, "zw");
+        assert_eq!(telex("fw").0, "fw");
+        assert_eq!(telex("jw").0, "jw");
+        assert_eq!(telex("ew").0, "ew");
+        assert_eq!(telex("yw").0, "yw");
+    }
+
+    #[test]
+    fn standalone_w_after_a_two_letter_onset() {
+        // Only the nine digraphs that really are Vietnamese onsets take it.
+        for (seq, want) in [
+            ("thw", "thư"), ("trw", "trư"), ("chw", "chư"), ("nhw", "như"),
+            ("ngw", "ngư"), ("khw", "khư"), ("giw", "giư"), ("phw", "phư"),
+            ("ghw", "ghư"),
+        ] {
+            assert_eq!(telex(seq).0, want, "telex {seq:?}");
+        }
+        // Anything else is two letters of a foreign word.
+        assert_eq!(telex("plw").0, "plw");
+        assert_eq!(telex("stw").0, "stw");
+        // Three letters in: OpenKey has no allow-list at all, so "nghư" — a
+        // syllable that does not exist — is never composed.
+        assert_eq!(telex("nghw").0, "nghw");
+    }
+
+    #[test]
+    fn standalone_w_ignores_marks_already_applied() {
+        // "eew" is 'ê' + 'w'. OpenKey compares the base letter, so the 'ê'
+        // still counts as the 'e' of the bad list and the word stays "êw" —
+        // reading it as an unlisted letter would compose the impossible "êư".
+        assert_eq!(telex("eew").0, "êw");
+    }
+
+    #[test]
+    fn a_second_w_undoes_a_standalone_one() {
+        // The 'ư' came from the 'w' key alone, so undoing it leaves the key
+        // itself — not the "uw" the user never typed.
+        let r = process_telex("ww", &Config::default());
+        assert_eq!(r.bare, "w");
+        assert_eq!(r.literal.as_deref(), Some("w"));
+        assert_eq!(r.case_mask.len(), 1);
+    }
+
+    #[test]
+    fn a_second_w_still_restores_a_typed_uw() {
+        // Same 'ư' on screen, different origin: here the user really did type
+        // "uw", so the undo has to give both letters back.
+        let r = process_telex("uww", &Config::default());
+        assert_eq!(r.bare, "uw");
+        assert_eq!(r.literal.as_deref(), Some("uw"));
+    }
+
+    #[test]
+    fn standalone_w_can_be_switched_off() {
+        let plain = Config { standalone_w: false, ..Default::default() };
+        assert_eq!(telex_with(&plain, "w"), "w");
+        assert_eq!(telex_with(&plain, "thw"), "thw");
+        // The horn keys themselves are untouched by the switch.
+        assert_eq!(telex_with(&plain, "thuowng"), "thương");
     }
 
     #[test]
@@ -438,6 +656,40 @@ mod tests {
         // After the "qu" onset the 'u' is not part of the nucleus, so 'w'
         // falls to the 'a': "quawng" → "quăng", never "qưang".
         assert_eq!(telex("quawng").0, "quăng");
+    }
+
+    #[test]
+    fn quick_telex_expands_a_doubled_consonant() {
+        let quick = Config { quick_telex: true, ..Default::default() };
+        for (seq, want) in [
+            ("cc", "ch"), ("gg", "gi"), ("kk", "kh"), ("nn", "ng"),
+            ("qq", "qu"), ("pp", "ph"), ("tt", "th"),
+        ] {
+            assert_eq!(telex_with(&quick, seq), want, "telex {seq:?}");
+        }
+    }
+
+    #[test]
+    fn quick_telex_is_not_limited_to_the_word_start() {
+        let quick = Config { quick_telex: true, ..Default::default() };
+        // OpenKey looks only at the character in front of the key, wherever
+        // in the word it sits.
+        assert_eq!(telex_with(&quick, "acc"), "ach");
+        // There is no undo path: the third 'c' finds an 'h' in front of it and
+        // is simply typed.
+        assert_eq!(telex_with(&quick, "ccc"), "chc");
+        // And the same literal reading gives "ngg" → "ngi", because the key
+        // doubles the 'g' it landed on. OpenKey behaves this way too.
+        assert_eq!(telex_with(&quick, "ngg"), "ngi");
+    }
+
+    #[test]
+    fn quick_telex_is_off_by_default() {
+        // It costs the ability to type a doubled consonant at all, so it is
+        // opt-in — "cc" has to stay "cc".
+        assert_eq!(telex("cc").0, "cc");
+        assert_eq!(telex("tt").0, "tt");
+        assert_eq!(telex("ngg").0, "ngg");
     }
 
     #[test]
