@@ -1,0 +1,162 @@
+/* Shared by every surface, so the panel and the settings window are the same
+   object seen twice. Deliberately one palette: a menu-bar utility reads as its
+   own thing rather than following the system appearance. */
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --lacquer: #070b16;
+  --ink: #eaf0f9;
+  --mist: #9fabc3;
+  --faint: #77839d;
+  --jade: #38e1a9;
+  --jade-soft: rgba(56, 225, 169, 0.14);
+  --glass: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-soft: rgba(255, 255, 255, 0.07);
+  --danger: #ff9c9c;
+  --radius: 13px;
+}
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  /* The window is transparent so the rounded corners are ours to draw; the
+     surface below paints the background instead. */
+  background: transparent;
+  color: var(--mist);
+  font: 13.5px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+::selection { background: var(--jade); color: #06241a; }
+
+::-webkit-scrollbar { width: 9px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.14); border-radius: 99px;
+  border: 2px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.24); background-clip: content-box; }
+
+/* The lacquer surface every window sits on. */
+.surface {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 120% 70% at 50% -20%, #101a35 0%, transparent 60%),
+    radial-gradient(circle at 8% 4%, rgba(29,176,131,.16), transparent 42%),
+    radial-gradient(circle at 96% 92%, rgba(38,108,140,.16), transparent 46%),
+    var(--lacquer);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Rows */
+.row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 0; border-bottom: 1px solid var(--border-soft); min-height: 30px;
+}
+.row:last-child { border-bottom: none; }
+.row .lbl { flex: 1; min-width: 0; }
+.row .lbl b { display: block; color: var(--ink); font-weight: 500; }
+.row .lbl small { color: var(--faint); font-size: 11.5px; display: block; }
+
+.empty { color: var(--faint); font-size: 12.5px; padding: 10px 0; }
+
+h2.group {
+  margin: 18px 0 2px; font-size: 10.5px; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--jade);
+  font-family: ui-monospace, "SF Mono", monospace;
+}
+
+/* Toggle switch */
+.sw { position: relative; width: 40px; height: 24px; flex: none; }
+.sw input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.sw i {
+  position: absolute; inset: 0; border-radius: 999px;
+  background: rgba(255,255,255,.1); border: 1px solid var(--border);
+  transition: background .18s ease; pointer-events: none;
+}
+.sw i::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: #cfd8e6; transition: transform .18s ease, background .18s ease;
+}
+.sw input:checked + i { background: var(--jade); border-color: var(--jade); }
+.sw input:checked + i::after { transform: translateX(16px); background: #06241a; }
+.sw input:focus-visible + i { outline: 2px solid var(--jade); outline-offset: 2px; }
+
+/* Segmented control */
+.seg {
+  display: flex; background: rgba(255,255,255,.06); border: 1px solid var(--border);
+  border-radius: 9px; padding: 2px; flex: none;
+}
+.seg button {
+  appearance: none; border: 0; background: transparent; color: var(--mist);
+  font: inherit; font-size: 12.5px; padding: 4px 14px; border-radius: 7px; cursor: pointer;
+}
+.seg button.on { background: var(--jade); color: #06241a; font-weight: 600; }
+.seg button:focus-visible { outline: 2px solid var(--jade); outline-offset: 1px; }
+
+/* Buttons */
+button.btn {
+  appearance: none; font: inherit; font-size: 12.5px; cursor: pointer;
+  background: rgba(255,255,255,.07); color: var(--ink);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 13px;
+  white-space: nowrap;
+}
+button.btn:hover { background: rgba(255,255,255,.12); }
+button.btn:disabled { opacity: .5; cursor: default; }
+button.btn.danger { color: var(--danger); }
+button.btn.accent { background: var(--jade); color: #06241a; border-color: var(--jade); font-weight: 600; }
+button.btn:focus-visible { outline: 2px solid var(--jade); outline-offset: 2px; }
+
+/* Text input */
+input[type=text] {
+  background: rgba(255,255,255,.06); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--ink); font: inherit; padding: 6px 10px; outline: none; min-width: 0;
+  font-size: 12.5px;
+}
+input[type=text]:focus { border-color: rgba(56,225,169,.5); }
+
+/* Keycaps — one per key, so a combination reads as keys and not as glyph soup. */
+.caps { display: inline-flex; align-items: center; gap: 4px; }
+kbd {
+  display: inline-grid; place-items: center;
+  min-width: 26px; height: 24px; padding: 0 6px;
+  font-family: inherit; font-size: 12.5px; font-weight: 600; line-height: 1;
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(255,255,255,.13), rgba(255,255,255,.06));
+  border: 1px solid var(--border);
+  border-bottom-color: rgba(0,0,0,.45);
+  border-radius: 6px;
+  box-shadow: 0 1px 0 rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.12);
+}
+kbd.pending {
+  color: var(--faint); background: none; border-style: dashed;
+  border-bottom-color: var(--border); box-shadow: none;
+}
+
+/* Remove-from-list button */
+.rm {
+  appearance: none; border: 0; background: transparent; color: var(--faint);
+  font-size: 15px; cursor: pointer; padding: 2px 7px; border-radius: 6px; flex: none;
+}
+.rm:hover { color: var(--danger); background: rgba(255,255,255,.06); }
+
+.tag {
+  font-size: 10px; font-family: ui-monospace, "SF Mono", monospace;
+  color: var(--jade); background: var(--jade-soft);
+  border: 1px solid rgba(56,225,169,.25); border-radius: 5px;
+  padding: 1px 6px; margin-left: 8px; vertical-align: 1px;
+}
+
+.warn {
+  display: flex; gap: 8px; align-items: center;
+  margin: 0; padding: 9px 12px; border-radius: 9px;
+  background: rgba(242,201,125,.1); border: 1px solid rgba(242,201,125,.3);
+  color: #f2c97d; font-size: 12px;
+}

@@ -2,6 +2,54 @@ pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
 const REPO: &str = "PhaciusPhat/PhaciusKey";
 
+/// Where the update cycle has got to. Held here rather than in the tray, so
+/// every surface reports the same thing without one of them having to ask
+/// another.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Status {
+    #[default]
+    Idle,
+    Checking,
+    Available(String),
+    Installing(String),
+    Failed(String),
+}
+
+impl Status {
+    /// A stable name for the page to switch on, separate from the prose.
+    pub fn state(&self) -> &'static str {
+        match self {
+            Status::Idle => "idle",
+            Status::Checking => "checking",
+            Status::Available(_) => "available",
+            Status::Installing(_) => "installing",
+            Status::Failed(_) => "failed",
+        }
+    }
+
+    pub fn detail(&self) -> String {
+        match self {
+            Status::Idle => format!("{CURRENT} — up to date"),
+            Status::Checking => format!("{CURRENT} — checking…"),
+            Status::Available(v) => format!("{CURRENT} — version {v} is ready"),
+            Status::Installing(v) => format!("{CURRENT} — installing {v}…"),
+            Status::Failed(reason) => format!("{CURRENT} — update failed: {reason}"),
+        }
+    }
+}
+
+static STATUS: std::sync::Mutex<Status> = std::sync::Mutex::new(Status::Idle);
+
+pub fn status() -> Status {
+    STATUS.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+pub fn set_status(next: Status) {
+    if let Ok(mut status) = STATUS.lock() {
+        *status = next;
+    }
+}
+
 pub fn releases_url() -> String {
     format!("https://github.com/{REPO}/releases/latest")
 }

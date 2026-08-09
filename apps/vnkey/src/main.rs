@@ -9,9 +9,9 @@ mod config;
 mod installer;
 mod platform;
 mod png_write;
-mod settings_window;
 mod state;
 mod tray;
+mod ui;
 mod update;
 
 use std::time::{Duration, Instant};
@@ -22,8 +22,8 @@ use tray_icon::menu::{MenuEvent, MenuId};
 
 use crate::config::Settings;
 use crate::platform::{Hook, KeyboardHook};
-use crate::settings_window::SettingsWindow;
 use crate::tray::Tray;
+use crate::ui::{SettingsWindow, WindowAction};
 
 enum UserEvent {
     UpdateAvailable(String),
@@ -116,10 +116,12 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 permission_requested = true;
             }
             Event::UserEvent(UserEvent::UpdateAvailable(version)) => {
+                update::set_status(update::Status::Available(version.clone()));
                 if let Some(tray) = &tray {
                     tray.set_update_available(&version);
                 }
                 if state::settings().auto_update && installer::app_bundle().is_some() {
+                    update::set_status(update::Status::Installing(version.clone()));
                     if let Some(tray) = &tray {
                         tray.set_update_installing(&version);
                     }
@@ -131,6 +133,7 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             }
             Event::UserEvent(UserEvent::UpdateFailed(version, reason)) => {
                 eprintln!("[vnkey] automatic update to {version} failed: {reason}");
+                update::set_status(update::Status::Failed(reason.clone()));
                 if let Some(tray) = &tray {
                     tray.set_update_available(&version);
                 }
@@ -140,10 +143,12 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 if let Some(tray) = &tray {
                     match result {
                         Ok(Some(version)) => {
+                            update::set_status(update::Status::Available(version.clone()));
                             tray.set_update_available(&version);
                             start_install(tray, &proxy, version);
                         }
                         Ok(None) => {
+                            update::set_status(update::Status::Idle);
                             tray.set_update_idle();
                             installer::announce(&format!(
                                 "PhaciusKey {} is up to date.",
@@ -151,6 +156,7 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                             ));
                         }
                         Err(e) => {
+                            update::set_status(update::Status::Failed(e.clone()));
                             tray.set_update_idle();
                             installer::announce(&format!("Could not check for updates.\n\n{e}"));
                         }
@@ -166,7 +172,44 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 }
             }
             Event::UserEvent(UserEvent::Ipc(msg)) => {
-                settings_window::apply_ipc(&msg);
+                match ui::apply_ipc(&msg) {
+                    Some(WindowAction::Close) => {
+                        if let Some(win) = &settings_win {
+                            win.hide();
+                        }
+                    }
+                    Some(WindowAction::Drag) => {
+                        if let Some(win) = &settings_win {
+                            win.drag();
+                        }
+                    }
+                    Some(WindowAction::OpenSettings) => {
+                        open_settings(&mut settings_win, target, &proxy);
+                    }
+                    Some(WindowAction::CheckUpdates) => {
+                        match tray.as_ref().and_then(Tray::available_version) {
+                            Some(version) => {
+                                if let Some(tray) = &tray {
+                                    start_install(tray, &proxy, version);
+                                }
+                            }
+                            None => {
+                                update::set_status(update::Status::Checking);
+                                if let Some(tray) = &tray {
+                                    tray.set_update_checking();
+                                }
+                                let proxy = proxy.clone();
+                                std::thread::spawn(move || {
+                                    let _ = proxy.send_event(UserEvent::UpdateCheckDone(
+                                        update::check_for_newer(),
+                                    ));
+                                });
+                            }
+                        }
+                    }
+                    Some(WindowAction::Quit) => *control_flow = ControlFlow::Exit,
+                    None => {}
+                }
                 if let Some(tray) = &tray {
                     tray.refresh(&state::settings(), state::current_app().as_deref());
                 }
@@ -201,16 +244,7 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
         while let Ok(menu_event) = menu_channel.try_recv() {
             if let Some(tray) = &tray {
                 if menu_event.id == tray.settings.id() {
-                    match &settings_win {
-                        Some(win) => win.show(),
-                        None => match SettingsWindow::new(target, proxy.clone()) {
-                            Ok(win) => {
-                                win.show();
-                                settings_win = Some(win);
-                            }
-                            Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
-                        },
-                    }
+                    open_settings(&mut settings_win, target, &proxy);
                     continue;
                 }
                 handle_menu_event(tray, &proxy, &menu_event.id, control_flow);
@@ -228,6 +262,23 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             };
         }
     })
+}
+
+fn open_settings(
+    settings_win: &mut Option<SettingsWindow>,
+    target: &tao::event_loop::EventLoopWindowTarget<UserEvent>,
+    proxy: &EventLoopProxy<UserEvent>,
+) {
+    match settings_win {
+        Some(win) => win.show(),
+        None => match SettingsWindow::new(target, proxy.clone()) {
+            Ok(win) => {
+                win.show();
+                *settings_win = Some(win);
+            }
+            Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
+        },
+    }
 }
 
 fn spawn_secure_input_watch(proxy: EventLoopProxy<UserEvent>) {
@@ -297,6 +348,7 @@ fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
 
 fn start_install(tray: &Tray, proxy: &EventLoopProxy<UserEvent>, version: String) {
     if installer::app_bundle().is_some() {
+        update::set_status(update::Status::Installing(version.clone()));
         tray.set_update_installing(&version);
         spawn_update_install(proxy.clone(), version);
     } else {

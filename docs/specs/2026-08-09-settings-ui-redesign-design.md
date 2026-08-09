@@ -208,9 +208,10 @@ Dragging is `mousedown` on the header (excluding controls) → IPC →
 unconditionally, so a borderless window still takes keyboard focus and the
 macro text fields keep working.
 
-The close control sits top-left on macOS and top-right on Windows, selected by
-one CSS rule off a `data-platform` attribute. Having taken over the chrome, we
-are now responsible for matching each platform's convention.
+The close control sits at the trailing edge of the titlebar on both platforms.
+It is drawn from the same glass-and-jade vocabulary as every other control here
+rather than imitating the system traffic lights, which a borderless window does
+not have.
 
 **Tabs.**
 

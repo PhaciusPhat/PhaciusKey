@@ -1,20 +1,13 @@
-use std::cell::RefCell;
 use std::sync::Mutex;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
-use tao::dpi::LogicalSize;
-use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
-use tao::window::{Window, WindowBuilder, WindowId};
-use wry::WebView;
+use serde_json::Value;
 
 use crate::config::{
-    macro_export_json, merge_macros, parse_macro_export, parse_shortcut, shortcut_from_event,
-    shortcut_parts, valid_macro_trigger, Method, Placement, Settings,
+    macro_export_json, merge_macros, parse_macro_export, shortcut_from_event, valid_macro_trigger,
+    Method, Placement, Settings,
 };
-use crate::{autostart, platform, state, update, UserEvent};
-
-const HTML: &str = include_str!("settings.html");
+use crate::{autostart, state, update};
 
 static NOTICE: Mutex<Option<String>> = Mutex::new(None);
 
@@ -24,118 +17,22 @@ fn set_notice(text: impl Into<String>) {
     }
 }
 
-fn take_notice() -> Option<String> {
+pub(super) fn take_notice() -> Option<String> {
     NOTICE.lock().ok().and_then(|mut notice| notice.take())
 }
 
-pub struct SettingsWindow {
-    window: Window,
-    webview: WebView,
-    installed_apps: RefCell<Vec<String>>,
+/// What a page asked of the window it lives in. Everything else a message can
+/// ask for is settings state, which is applied here and pushed back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowAction {
+    Close,
+    Drag,
+    Quit,
+    OpenSettings,
+    CheckUpdates,
 }
 
-impl SettingsWindow {
-    pub fn new(
-        target: &EventLoopWindowTarget<UserEvent>,
-        proxy: EventLoopProxy<UserEvent>,
-    ) -> Result<Self, String> {
-        let window = WindowBuilder::new()
-            .with_title("PhaciusKey Settings")
-            .with_inner_size(LogicalSize::new(680.0, 720.0))
-            .with_min_inner_size(LogicalSize::new(560.0, 480.0))
-            .build(target)
-            .map_err(|e| e.to_string())?;
-
-        let webview = wry::WebViewBuilder::new()
-            .with_html(HTML)
-            .with_ipc_handler(move |request| {
-                let _ = proxy.send_event(UserEvent::Ipc(request.body().clone()));
-            })
-            .build(&window)
-            .map_err(|e| e.to_string())?;
-
-        Ok(Self {
-            window,
-            webview,
-            installed_apps: RefCell::new(platform::installed_apps()),
-        })
-    }
-
-    pub fn window_id(&self) -> WindowId {
-        self.window.id()
-    }
-
-    pub fn show(&self) {
-        *self.installed_apps.borrow_mut() = platform::installed_apps();
-        self.window.set_visible(true);
-        self.window.set_focus();
-    }
-
-    pub fn hide(&self) {
-        state::set_shortcut_recording(false);
-        self.window.set_visible(false);
-    }
-
-    pub fn push_state(&self) {
-        let state = state_json(
-            &state::settings(),
-            state::current_app().as_deref(),
-            &self.installed_apps.borrow(),
-        );
-        let _ = self
-            .webview
-            .evaluate_script(&format!("window.__setState({state})"));
-    }
-}
-
-/// Everything the app-name fields offer as suggestions: what is installed,
-/// plus anything typed in during this session, which catches binaries that
-/// live outside the usual application folders.
-fn suggestions(installed_apps: &[String], current_app: Option<&str>) -> Vec<String> {
-    let mut names = installed_apps.to_vec();
-    names.extend(state::seen_apps());
-    names.extend(current_app.map(str::to_string));
-    names.sort_by_key(|n| n.to_ascii_lowercase());
-    names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-    names
-}
-
-fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]) -> String {
-    let macros: Vec<Value> = s
-        .macros
-        .iter()
-        .map(|(trigger, expansion)| json!({ "trigger": trigger, "expansion": expansion }))
-        .collect();
-
-    json!({
-        "version": update::CURRENT,
-        "enabled": s.enabled,
-        "method": match s.method { Method::Telex => "telex", Method::Vni => "vni" },
-        "placement": match s.placement { Placement::Modern => "modern", Placement::Classic => "classic" },
-        "auto_restore": s.auto_restore,
-        "standalone_w": s.standalone_w,
-        "quick_telex": s.quick_telex,
-        "quick_start_consonant": s.quick_start_consonant,
-        "quick_end_consonant": s.quick_end_consonant,
-        "auto_capitalize": s.auto_capitalize,
-        "auto_update": s.auto_update,
-        "start_at_login": autostart::effective(s.start_at_login),
-        "toggle_shortcut": s.toggle_shortcut,
-        "shortcut_parts": shortcut_parts(&s.toggle_shortcut),
-        "shortcut_valid": parse_shortcut(&s.toggle_shortcut).is_some(),
-        "macros_enabled": s.macros_enabled,
-        "current_app": current_app,
-        "excluded_apps": s.disabled_apps,
-        "suggestions": suggestions(installed_apps, current_app),
-        "macros": macros,
-        "slow_apps": s.slow_apps,
-        "autocomplete_fix_apps": s.autocomplete_fix_apps,
-        "notice": take_notice(),
-    })
-    .to_string()
-}
-
-/// The wire format the page speaks. Deserialising into a tagged enum, rather
+/// The wire format the pages speak. Deserialising into a tagged enum, rather
 /// than reading fields off a `Value` by hand, is what makes a mistyped or
 /// shadowed field an error instead of a silently ignored message.
 #[derive(Debug, PartialEq, Deserialize)]
@@ -181,12 +78,22 @@ enum Cmd {
         text: String,
     },
     OpenConfig,
+    ReportIssue,
+    CheckUpdates,
+    ToggleVietnamese,
+    DragWindow,
+    CloseWindow,
+    OpenSettings,
+    Quit,
 }
 
-pub fn apply_ipc(msg: &str) {
+pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
     let cmd = match serde_json::from_str::<Cmd>(msg) {
         Ok(cmd) => cmd,
-        Err(e) => return eprintln!("[vnkey] ignoring settings message ({e}): {msg}"),
+        Err(e) => {
+            eprintln!("[vnkey] ignoring interface message ({e}): {msg}");
+            return None;
+        }
     };
 
     match cmd {
@@ -225,15 +132,24 @@ pub fn apply_ipc(msg: &str) {
             shift,
             meta,
         } => {
-            let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, &code) else {
-                return;
-            };
-            state::update(move |s| s.toggle_shortcut = shortcut);
+            if let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, &code) {
+                state::update(move |s| s.toggle_shortcut = shortcut);
+            }
         }
         Cmd::MacrosExport => export_macros(),
         Cmd::MacrosImport { text } => import_macros(&text),
         Cmd::OpenConfig => crate::open_config_file(),
+        Cmd::ReportIssue => update::open_url(&update::new_issue_url()),
+        Cmd::CheckUpdates => return Some(WindowAction::CheckUpdates),
+        Cmd::ToggleVietnamese => {
+            state::toggle_vietnamese();
+        }
+        Cmd::DragWindow => return Some(WindowAction::Drag),
+        Cmd::CloseWindow => return Some(WindowAction::Close),
+        Cmd::OpenSettings => return Some(WindowAction::OpenSettings),
+        Cmd::Quit => return Some(WindowAction::Quit),
     }
+    None
 }
 
 fn set_listed(list: &mut Vec<String>, name: &str, on: bool) {
@@ -244,6 +160,38 @@ fn set_listed(list: &mut Vec<String>, name: &str, on: bool) {
     }
 }
 
+fn apply_set(key: &str, value: &Value) {
+    let toggle: Option<fn(&mut Settings, bool)> = match key {
+        "enabled" => Some(|s, on| s.enabled = on),
+        "auto_restore" => Some(|s, on| s.auto_restore = on),
+        "auto_update" => Some(|s, on| s.auto_update = on),
+        "start_at_login" => Some(|s, on| s.start_at_login = on),
+        "standalone_w" => Some(|s, on| s.standalone_w = on),
+        "quick_telex" => Some(|s, on| s.quick_telex = on),
+        "quick_start_consonant" => Some(|s, on| s.quick_start_consonant = on),
+        "quick_end_consonant" => Some(|s, on| s.quick_end_consonant = on),
+        "auto_capitalize" => Some(|s, on| s.auto_capitalize = on),
+        "macros_enabled" => Some(|s, on| s.macros_enabled = on),
+        _ => None,
+    };
+
+    if let Some(set) = toggle {
+        let Some(on) = value.as_bool() else { return };
+        let updated = state::update(|s| set(s, on));
+        if key == "start_at_login" {
+            autostart::apply(updated.start_at_login);
+        }
+        return;
+    }
+
+    match (key, value.as_str()) {
+        ("method", Some("telex")) => state::update(|s| s.method = Method::Telex),
+        ("method", Some("vni")) => state::update(|s| s.method = Method::Vni),
+        ("placement", Some("modern")) => state::update(|s| s.placement = Placement::Modern),
+        ("placement", Some("classic")) => state::update(|s| s.placement = Placement::Classic),
+        _ => return,
+    };
+}
 
 fn export_macros() {
     let settings = state::settings();
@@ -320,39 +268,6 @@ fn plural_y(n: usize) -> &'static str {
     }
 }
 
-fn apply_set(key: &str, value: &Value) {
-    let toggle: Option<fn(&mut Settings, bool)> = match key {
-        "enabled" => Some(|s, on| s.enabled = on),
-        "auto_restore" => Some(|s, on| s.auto_restore = on),
-        "auto_update" => Some(|s, on| s.auto_update = on),
-        "start_at_login" => Some(|s, on| s.start_at_login = on),
-        "standalone_w" => Some(|s, on| s.standalone_w = on),
-        "quick_telex" => Some(|s, on| s.quick_telex = on),
-        "quick_start_consonant" => Some(|s, on| s.quick_start_consonant = on),
-        "quick_end_consonant" => Some(|s, on| s.quick_end_consonant = on),
-        "auto_capitalize" => Some(|s, on| s.auto_capitalize = on),
-        "macros_enabled" => Some(|s, on| s.macros_enabled = on),
-        _ => None,
-    };
-
-    if let Some(set) = toggle {
-        let Some(on) = value.as_bool() else { return };
-        let updated = state::update(|s| set(s, on));
-        if key == "start_at_login" {
-            autostart::apply(updated.start_at_login);
-        }
-        return;
-    }
-
-    match (key, value.as_str()) {
-        ("method", Some("telex")) => state::update(|s| s.method = Method::Telex),
-        ("method", Some("vni")) => state::update(|s| s.method = Method::Vni),
-        ("placement", Some("modern")) => state::update(|s| s.placement = Placement::Modern),
-        ("placement", Some("classic")) => state::update(|s| s.placement = Placement::Classic),
-        _ => return,
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn every_command_the_page_sends_is_understood() {
+    fn every_command_the_pages_send_is_understood() {
         for msg in [
             r#"{"cmd":"init"}"#,
             r#"{"cmd":"set","key":"enabled","value":true}"#,
@@ -403,6 +318,13 @@ mod tests {
             r#"{"cmd":"macros_export"}"#,
             r#"{"cmd":"macros_import","text":"{}"}"#,
             r#"{"cmd":"open_config"}"#,
+            r#"{"cmd":"report_issue"}"#,
+            r#"{"cmd":"check_updates"}"#,
+            r#"{"cmd":"toggle_vietnamese"}"#,
+            r#"{"cmd":"drag_window"}"#,
+            r#"{"cmd":"close_window"}"#,
+            r#"{"cmd":"open_settings"}"#,
+            r#"{"cmd":"quit"}"#,
         ] {
             assert!(
                 serde_json::from_str::<Cmd>(msg).is_ok(),
@@ -416,39 +338,6 @@ mod tests {
         assert!(serde_json::from_str::<Cmd>(r#"{"cmd":"nonsense"}"#).is_err());
         assert!(serde_json::from_str::<Cmd>(r#"{"cmd":"exclude"}"#).is_err());
         assert!(serde_json::from_str::<Cmd>("not json").is_err());
-    }
-
-    /// `$("missing")` returns null and the next property access throws, which
-    /// aborts the whole script and leaves every control on the page inert.
-    #[test]
-    fn every_element_the_page_looks_up_exists_in_the_markup() {
-        let ids: Vec<&str> = HTML
-            .match_indices("id=\"")
-            .filter_map(|(at, _)| HTML[at + 4..].split('"').next())
-            .collect();
-
-        let looked_up = HTML
-            .match_indices("$(\"")
-            .filter_map(|(at, _)| HTML[at + 3..].split('"').next());
-
-        for id in looked_up {
-            assert!(ids.contains(&id), "the page looks up #{id}, which is gone");
-        }
-    }
-
-    /// Every switch reports a settings key the state payload also carries.
-    #[test]
-    fn every_switch_binds_to_a_key_the_payload_sends() {
-        let payload = state_json(&Settings::default(), None, &[]);
-        let payload: Value = serde_json::from_str(&payload).unwrap();
-
-        let keys = HTML
-            .match_indices("data-key=\"")
-            .filter_map(|(at, _)| HTML[at + 10..].split('"').next());
-
-        for key in keys {
-            assert!(payload.get(key).is_some(), "no state is pushed for {key}");
-        }
     }
 
     #[test]

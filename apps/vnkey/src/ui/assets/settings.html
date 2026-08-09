@@ -1,0 +1,164 @@
+<div class="surface">
+  <header class="titlebar" id="titlebar">
+    <button class="close" id="close" type="button" title="Close" aria-label="Close">✕</button>
+    <h1>PhaciusKey</h1>
+    <p class="ver" id="version"></p>
+  </header>
+
+  <div class="body">
+    <nav class="nav" id="nav" role="tablist">
+      <button type="button" role="tab" data-tab="typing" aria-selected="true">Typing</button>
+      <button type="button" role="tab" data-tab="macros" aria-selected="false">Macros</button>
+      <button type="button" role="tab" data-tab="apps" aria-selected="false">Apps</button>
+      <button type="button" role="tab" data-tab="about" aria-selected="false">About</button>
+    </nav>
+
+    <div class="pane" id="pane">
+
+      <section class="tab" id="tab-typing" role="tabpanel">
+        <h2 class="group">Vietnamese</h2>
+        <div class="row">
+          <div class="lbl"><b>Vietnamese typing</b><small>The master switch, everywhere</small></div>
+          <label class="sw"><input type="checkbox" id="enabled" data-key="enabled"><i></i></label>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Toggle shortcut</b><small id="shortcut-hint">Flips Vietnamese typing anywhere</small></div>
+          <button type="button" id="shortcut" class="rec caps"></button>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Input method</b><small>How diacritics are typed</small></div>
+          <div class="seg" id="method">
+            <button type="button" data-v="telex">Telex</button>
+            <button type="button" data-v="vni">VNI</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Tone placement</b><small>Modern “hòa” or classic “hoà”</small></div>
+          <div class="seg" id="placement">
+            <button type="button" data-v="modern">Modern</button>
+            <button type="button" data-v="classic">Classic</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Auto-restore English words</b><small>Typing “gôd” gives you back “good”</small></div>
+          <label class="sw"><input type="checkbox" id="auto_restore" data-key="auto_restore"><i></i></label>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Capitalize sentences</b><small>First letter after “.”, “!” or “?” goes uppercase</small></div>
+          <label class="sw"><input type="checkbox" id="auto_capitalize" data-key="auto_capitalize"><i></i></label>
+        </div>
+
+        <div id="telex-group">
+          <h2 class="group">Telex shortcuts</h2>
+          <div class="row">
+            <div class="lbl"><b>Standalone “w” types “ư”</b><small>“thw” gives “thư”. Standard in Unikey</small></div>
+            <label class="sw"><input type="checkbox" id="standalone_w" data-key="standalone_w"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="lbl"><b>Quick Telex</b><small>Doubled consonants expand: “cc” → “ch”, “nn” → “ng”</small></div>
+            <label class="sw"><input type="checkbox" id="quick_telex" data-key="quick_telex"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="lbl"><b>Quick start consonants</b><small>“f” → “ph”, “j” → “gi”, “w” → “qu” at the start of a word</small></div>
+            <label class="sw"><input type="checkbox" id="quick_start_consonant" data-key="quick_start_consonant"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="lbl"><b>Quick end consonants</b><small>After a vowel, “g” → “ng”, “h” → “nh”, “k” → “ch”</small></div>
+            <label class="sw"><input type="checkbox" id="quick_end_consonant" data-key="quick_end_consonant"><i></i></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="tab" id="tab-macros" role="tabpanel" hidden>
+        <h2 class="group">Macros</h2>
+        <div class="row">
+          <div class="lbl"><b>Expand macros</b><small>Turn off to park the feature — your list is kept</small></div>
+          <label class="sw"><input type="checkbox" id="macros_enabled" data-key="macros_enabled"><i></i></label>
+        </div>
+        <div id="macros"></div>
+        <div class="addrow">
+          <input type="text" id="mtrig" placeholder="Shortcut, e.g. vd" spellcheck="false" autocomplete="off">
+          <input type="text" id="mexp" placeholder="Expands to, e.g. ví dụ" spellcheck="false" autocomplete="off">
+          <button class="btn" id="maddbtn" type="button">Add</button>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Backup</b><small>Export saves to Downloads. Import merges — nothing you have is removed</small></div>
+          <div class="pair">
+            <button class="btn" id="mexport" type="button">Export…</button>
+            <button class="btn" id="mimport" type="button">Import…</button>
+          </div>
+        </div>
+        <input type="file" id="mfile" accept="application/json,.json" hidden>
+      </section>
+
+      <section class="tab" id="tab-apps" role="tabpanel" hidden>
+        <h2 class="group">Never use Vietnamese typing</h2>
+        <div class="row">
+          <div class="lbl"><small>Vietnamese stays off in these apps, and the toggle shortcut does nothing while you are in one.</small></div>
+        </div>
+        <div id="apps"></div>
+        <div class="addrow">
+          <input type="text" id="addname" list="applist" placeholder="Search apps, e.g. Terminal" spellcheck="false" autocomplete="off">
+          <datalist id="applist"></datalist>
+          <button class="btn" id="addbtn" type="button">Add</button>
+        </div>
+
+        <h2 class="group">Slow typing</h2>
+        <div class="row">
+          <div class="lbl"><small>Brief pause between injected keys, for apps that drop fast bursts.</small></div>
+        </div>
+        <div id="slowapps"></div>
+        <div class="addrow">
+          <input type="text" id="slowname" list="applist" placeholder="Search apps, e.g. IntelliJ IDEA" spellcheck="false" autocomplete="off">
+          <button class="btn" id="slowbtn" type="button">Add</button>
+        </div>
+
+        <h2 class="group">Autocomplete fix</h2>
+        <div class="row">
+          <div class="lbl"><small>For address bars and cells that complete as you type and double your letters (“dđ”).</small></div>
+        </div>
+        <div id="acapps"></div>
+        <div class="addrow">
+          <input type="text" id="acname" list="applist" placeholder="Search apps, e.g. Safari" spellcheck="false" autocomplete="off">
+          <button class="btn" id="acbtn" type="button">Add</button>
+        </div>
+
+        <div class="foot">
+          <button class="btn danger" id="forget" type="button">Clear the app list</button>
+        </div>
+      </section>
+
+      <section class="tab" id="tab-about" role="tabpanel" hidden>
+        <h2 class="group">PhaciusKey</h2>
+        <div class="row">
+          <div class="lbl"><b>Version</b><small id="update-status"></small></div>
+          <button class="btn" id="update-btn" type="button">Check for updates…</button>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Install updates automatically</b></div>
+          <label class="sw"><input type="checkbox" id="auto_update" data-key="auto_update"><i></i></label>
+        </div>
+        <div class="row">
+          <div class="lbl"><b>Start at login</b></div>
+          <label class="sw"><input type="checkbox" id="start_at_login" data-key="start_at_login"><i></i></label>
+        </div>
+
+        <h2 class="group">Cheatsheet</h2>
+        <div class="cheatsheet">
+          <b>Telex</b> &nbsp;<code>aa â · ee ê · oo ô · ow ơ · uw ư · aw ă · dd đ</code><br>
+          <b>Telex tones</b> &nbsp;<code>s sắc · f huyền · r hỏi · x ngã · j nặng · z xoá</code><br>
+          <b>VNI</b> &nbsp;<code>6 â ê ô · 7 ơ ư · 8 ă · 9 đ · 1–5 tones · 0 xoá</code><br>
+          <b>Esc</b> &nbsp;<code>restore the word exactly as you typed it</code>
+        </div>
+
+        <div class="foot">
+          <button class="btn" id="report" type="button">Report an issue…</button>
+          <button class="btn" id="open_config" type="button">Open config file…</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
