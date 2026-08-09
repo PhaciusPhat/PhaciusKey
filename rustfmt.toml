@@ -1,0 +1,11 @@
+# Stock rustfmt at the width this codebase was already written to (p99 is 92
+# columns). Raising `use_small_heuristics` was tried and rejected: it collapses
+# method chains onto one line, which chapter 1 §1.5 of
+# .claude/skills/rust-best-practices asks to keep broken one call per line.
+#
+# Import grouping from §1.7 (`group_imports = "StdExternalCrate"`,
+# `imports_granularity = "Crate"`) is deliberately absent — both are
+# nightly-only and make stable `cargo fmt` print a warning on every run. The
+# imports in this repo are already in that order; run `cargo +nightly fmt` if
+# you want it enforced.
+max_width = 100

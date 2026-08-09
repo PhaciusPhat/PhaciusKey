@@ -6,4 +6,4 @@ Disallow: /_layouts/
 User-agent: *
 Allow: /
 
-Sitemap: https://phaciusphat.github.io/phacius_vnkey/sitemap.xml
+Sitemap: https://phaciusphat.github.io/PhaciusKey/sitemap.xml

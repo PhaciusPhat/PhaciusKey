@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds a distributable phacius_vnkey.dmg from the Rust binary. End users just
+# Builds a distributable PhaciusKey.dmg from the Rust binary. End users just
 # drag the .app to /Applications — no Rust, no toolchain. Rust is only needed
 # HERE (build time); the whole app is a single self-contained Rust executable.
 

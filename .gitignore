@@ -6,6 +6,18 @@ Cargo.lock
 # macOS
 .DS_Store
 
+# Claude Code — skills are shared, local permission grants and scratch are not
+.claude/settings.local.json
+.claude/.cc-writes/
+
+# RustRover / JetBrains IDEs
+# .idea/ holds generated project state: modules.xml, vcs.xml, the .iml module
+# file, and workspace.xml (window layout, run history, per-user paths).
+.idea/
+*.iml
+*.iws
+*.ipr
+
 # Brainstorm companion
 .superpowers/
 

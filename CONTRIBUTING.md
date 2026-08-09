@@ -1,4 +1,4 @@
-# Contributing to phacius_vnkey
+# Contributing to PhaciusKey
 
 ## Building from source
 

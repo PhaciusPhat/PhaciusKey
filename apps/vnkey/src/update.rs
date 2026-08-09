@@ -1,6 +1,6 @@
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 
-const REPO: &str = "PhaciusPhat/phacius_vnkey";
+const REPO: &str = "PhaciusPhat/PhaciusKey";
 
 pub fn releases_url() -> String {
     format!("https://github.com/{REPO}/releases/latest")

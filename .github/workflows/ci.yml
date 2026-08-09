@@ -14,8 +14,12 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
       - run: cargo test --all
-      - run: cargo clippy --all-targets -- -D warnings
+      # `--locked` is deliberately absent: Cargo.lock is gitignored, so a fresh
+      # clone has none to lock to. Committing it (standard for an application,
+      # and what makes a signed release reproducible) is the prerequisite.
+      - run: cargo clippy --all-targets --all-features -- -D warnings
 
   windows:
     name: Rust — Windows build
@@ -27,3 +31,6 @@ jobs:
       # Build only the vnkey shell (the Windows platform module is still an
       # untested scaffold; this catches compile regressions on Windows).
       - run: cargo build -p vnkey
+      # The macOS job cannot lint `platform/windows.rs`, so the workspace
+      # `[lints]` table reached only half the code until this ran here.
+      - run: cargo clippy -p vnkey --all-targets --all-features -- -D warnings

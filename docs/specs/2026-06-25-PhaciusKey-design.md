@@ -1,4 +1,4 @@
-# phacius_vnkey — Design Document
+# PhaciusKey — Design Document
 
 **Date:** 2026-06-25
 **Status:** Draft for review
@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-`phacius_vnkey` is a Vietnamese input method (IME) for macOS. It lets users type Vietnamese
+`PhaciusKey` is a Vietnamese input method (IME) for macOS. It lets users type Vietnamese
 with diacritics and tone marks using standard keyboard conventions (Telex, VNI). The
 codebase is deliberately structured so the language logic is **OS-independent** and can be
 reused by future Windows and Linux shells with no changes.
@@ -48,7 +48,7 @@ One portable brain (Rust), thin per-OS bodies (Swift today; Windows/Linux later)
 │  └──────┬───────┘  └────────────┘  └──────────────────┘  │
 │         │ keystrokes in / edit-actions out                │
 │  ┌──────▼──────────────────────────────────────────────┐ │
-│  │  FFI bridge (C ABI)  —  phacius_vnkey_engine.h      │ │
+│  │  FFI bridge (C ABI)  —  PhaciusKey_engine.h      │ │
 │  └──────┬──────────────────────────────────────────────┘ │
 └─────────┼─────────────────────────────────────────────────┘
           │
@@ -68,7 +68,7 @@ or SwiftUI. A new OS = a new shell over the **same** core.
 ## 4. Repository layout
 
 ```
-phacius_vnkey/
+PhaciusKey/
 ├── README.md
 ├── crates/
 │   ├── vnkey-core/         # pure engine: methods, validator, buffer, tones
@@ -76,7 +76,7 @@ phacius_vnkey/
 │   │   └── tests/          # exhaustive table-driven unit tests
 │   └── vnkey-ffi/          # C-ABI wrapper; builds static/dylib + header
 │       ├── src/lib.rs
-│       └── cbindgen.toml   # auto-generates phacius_vnkey_engine.h
+│       └── cbindgen.toml   # auto-generates PhaciusKey_engine.h
 ├── apps/
 │   └── macos/              # Swift app — the ONLY OS-specific code
 │       ├── Sources/
@@ -144,7 +144,7 @@ sans-serif headings, soft-rounded corners (~10–14px), generous whitespace, fla
 │  Method      Telex  ⌄        │   ← Telex / VNI quick switch
 │  ───────────────────────────│
 │  Preferences…               │
-│  Quit phacius_vnkey         │
+│  Quit PhaciusKey         │
 └────────────────────────────┘
 ```
 The menu-bar icon shows current state at a glance (e.g. **VN** when on, dimmed when off).
@@ -155,7 +155,7 @@ are added, and reads as more "settings-app native."
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ ● ● ●   phacius_vnkey                                      │
+│ ● ● ●   PhaciusKey                                      │
 ├────────────┬─────────────────────────────────────────────┤
 │ ⌨︎ General  │  General                                     │
 │ ⌘ Hotkey   │  Typing behavior and defaults.               │
@@ -212,7 +212,7 @@ The FFI is a stable C ABI, so any language with C interop can host the core.
 ## 11. Build & tooling
 
 - `scripts/build-engine.sh` — `cargo build --release -p vnkey-ffi`, run `cbindgen` to emit
-  `phacius_vnkey_engine.h`, copy the lib + header into the macOS app's expected location.
+  `PhaciusKey_engine.h`, copy the lib + header into the macOS app's expected location.
 - Rust workspace via root `Cargo.toml`; macOS app via `Package.swift` (SwiftPM) linking the
   static lib.
 - Lint/format: `rustfmt` + `clippy`, `swift-format`.

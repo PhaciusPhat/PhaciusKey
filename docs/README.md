@@ -1,8 +1,8 @@
 PhaciusKey — Vietnamese Keyboard
 
-Homepage source for [phacius_vnkey](https://github.com/PhaciusPhat/phacius_vnkey).
+Homepage source for [PhaciusKey](https://github.com/PhaciusPhat/PhaciusKey).
 Published with GitHub Pages from the `main` branch, `/docs` folder:
-https://phaciusphat.github.io/phacius_vnkey/
+https://phaciusphat.github.io/PhaciusKey/
 
 ## Local preview
 

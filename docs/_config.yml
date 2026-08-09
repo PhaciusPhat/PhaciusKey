@@ -5,10 +5,10 @@ description: Bộ gõ tiếng Việt viết bằng Rust — dành cho macOS
 
 # GitHub Pages: served from the main branch, /docs folder
 url: "https://phaciusphat.github.io"
-baseurl: "/phacius_vnkey"
+baseurl: "/PhaciusKey"
 
 # Project
-repo: https://github.com/PhaciusPhat/phacius_vnkey
+repo: https://github.com/PhaciusPhat/PhaciusKey
 version: 0.0.18
 
 # Google-analytics (leave the id empty to keep the tag off)

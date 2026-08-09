@@ -1,4 +1,4 @@
-# phacius_vnkey
+# PhaciusKey
 
 Vietnamese input method (IME). Type Vietnamese with Telex or VNI using any
 keyboard — no special hardware required. **Written entirely in Rust**, one shared
@@ -27,7 +27,7 @@ engine driving thin per-OS keyboard hooks.
 - Menu-bar / system-tray control (toggle, method, tone placement, auto-restore)
 - Cross-platform by design: **macOS today**, **Windows** scaffold in progress
 
-### ⬇️ [Download the latest release](https://github.com/PhaciusPhat/phacius_vnkey/releases/latest)
+### ⬇️ [Download the latest release](https://github.com/PhaciusPhat/PhaciusKey/releases/latest)
 
 Grab `PhaciusKey-<version>.dmg`, drag it to Applications, done. No Rust, no toolchain.
 
@@ -37,7 +37,7 @@ Grab `PhaciusKey-<version>.dmg`, drag it to Applications, done. No Rust, no tool
 
 ## Install (macOS users)
 
-1. Open the [**latest release**](https://github.com/PhaciusPhat/phacius_vnkey/releases/latest) and download **`PhaciusKey-<version>.dmg`** under **Assets**.
+1. Open the [**latest release**](https://github.com/PhaciusPhat/PhaciusKey/releases/latest) and download **`PhaciusKey-<version>.dmg`** under **Assets**.
 2. Double-click the downloaded `.dmg`, then drag **PhaciusKey** onto the **Applications** shortcut.
 3. Open **PhaciusKey** from Applications. The **VN** icon appears in your menu bar.
 4. On first launch macOS asks for **Accessibility** permission — grant it in
@@ -92,8 +92,8 @@ is shared. Adding an OS means adding one `platform/<os>.rs`.
 ### 1. Clone and build
 
 ```bash
-git clone https://github.com/PhaciusPhat/phacius_vnkey.git
-cd phacius_vnkey
+git clone https://github.com/PhaciusPhat/PhaciusKey.git
+cd PhaciusKey
 cargo build -p vnkey
 ```
 
@@ -222,7 +222,7 @@ injected edit really lands before a passed-through Enter, and whether
 ## Project layout
 
 ```
-phacius_vnkey/
+PhaciusKey/
 ├── crates/
 │   └── vnkey-core/      # Pure Rust engine — methods, validator, tone placement
 ├── apps/
