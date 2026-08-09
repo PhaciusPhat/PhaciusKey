@@ -56,6 +56,7 @@ pub fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[Str
         "autocomplete_fix_apps": s.autocomplete_fix_apps,
         "update_state": status.state(),
         "update_detail": status.detail(),
+        "update_version": status.version(),
         "notice": super::ipc::take_notice(),
     })
     .to_string()

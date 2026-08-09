@@ -6,6 +6,7 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::WebView;
 
 use super::payload::state_json;
+use super::Surface;
 use crate::{platform, state, UserEvent};
 
 const CSS: &str = include_str!("assets/settings.css");
@@ -43,7 +44,7 @@ impl SettingsWindow {
             .with_html(super::document(CSS, BODY, SCRIPT))
             .with_transparent(true)
             .with_ipc_handler(move |request| {
-                let _ = proxy.send_event(UserEvent::Ipc(request.body().clone()));
+                let _ = proxy.send_event(UserEvent::Ipc(Surface::Settings, request.body().clone()));
             })
             .build(&window)
             .map_err(|e| e.to_string())?;

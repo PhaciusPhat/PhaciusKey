@@ -18,12 +18,13 @@ use std::time::{Duration, Instant};
 
 use tao::event::{Event, StartCause};
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
-use tray_icon::menu::{MenuEvent, MenuId};
+use tray_icon::menu::MenuEvent;
+use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 
 use crate::config::Settings;
 use crate::platform::{Hook, KeyboardHook};
 use crate::tray::Tray;
-use crate::ui::{SettingsWindow, WindowAction};
+use crate::ui::{Panel, SettingsWindow, Surface, WindowAction};
 
 enum UserEvent {
     UpdateAvailable(String),
@@ -31,7 +32,7 @@ enum UserEvent {
     UpdateFailed(String, String),
     UpdateCheckDone(Result<Option<String>, String>),
     StateChanged,
-    Ipc(String),
+    Ipc(Surface, String),
 }
 
 fn main() {
@@ -79,6 +80,7 @@ fn main() {
 fn run(event_loop: EventLoop<UserEvent>) -> ! {
     let proxy = event_loop.create_proxy();
     let menu_channel = MenuEvent::receiver();
+    let tray_channel = TrayIconEvent::receiver();
 
     let tray_sync = std::sync::Mutex::new(event_loop.create_proxy());
     state::set_on_change(Box::new(move || {
@@ -91,6 +93,7 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
     let mut hook: Option<Hook> = None;
     let mut permission_requested = false;
     let mut settings_win: Option<SettingsWindow> = None;
+    let mut panel: Option<Panel> = None;
 
     event_loop.run(move |event, target, control_flow| {
         match event {
@@ -99,6 +102,17 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 match Tray::new(&settings) {
                     Ok(t) => tray = Some(t),
                     Err(e) => eprintln!("[vnkey] failed to create tray: {e}"),
+                }
+                match Panel::new(target, proxy.clone()) {
+                    Ok(p) => panel = Some(p),
+                    Err(e) => {
+                        eprintln!("[vnkey] falling back to a native menu: {e}");
+                        if let Some(tray) = &mut tray {
+                            if let Err(e) = tray.attach_fallback_menu() {
+                                eprintln!("[vnkey] failed to attach the fallback menu: {e}");
+                            }
+                        }
+                    }
                 }
                 announce_completed_update();
                 spawn_update_check(proxy.clone());
@@ -117,14 +131,8 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             }
             Event::UserEvent(UserEvent::UpdateAvailable(version)) => {
                 update::set_status(update::Status::Available(version.clone()));
-                if let Some(tray) = &tray {
-                    tray.set_update_available(&version);
-                }
                 if state::settings().auto_update && installer::app_bundle().is_some() {
                     update::set_status(update::Status::Installing(version.clone()));
-                    if let Some(tray) = &tray {
-                        tray.set_update_installing(&version);
-                    }
                     spawn_update_install(proxy.clone(), version);
                 }
             }
@@ -134,88 +142,71 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             Event::UserEvent(UserEvent::UpdateFailed(version, reason)) => {
                 eprintln!("[vnkey] automatic update to {version} failed: {reason}");
                 update::set_status(update::Status::Failed(reason.clone()));
-                if let Some(tray) = &tray {
-                    tray.set_update_available(&version);
-                }
                 installer::announce_failure(&version, &reason);
             }
-            Event::UserEvent(UserEvent::UpdateCheckDone(result)) => {
-                if let Some(tray) = &tray {
-                    match result {
-                        Ok(Some(version)) => {
-                            update::set_status(update::Status::Available(version.clone()));
-                            tray.set_update_available(&version);
-                            start_install(tray, &proxy, version);
-                        }
-                        Ok(None) => {
-                            update::set_status(update::Status::Idle);
-                            tray.set_update_idle();
-                            installer::announce(&format!(
-                                "PhaciusKey {} is up to date.",
-                                update::CURRENT
-                            ));
-                        }
-                        Err(e) => {
-                            update::set_status(update::Status::Failed(e.clone()));
-                            tray.set_update_idle();
-                            installer::announce(&format!("Could not check for updates.\n\n{e}"));
-                        }
-                    }
+            Event::UserEvent(UserEvent::UpdateCheckDone(result)) => match result {
+                Ok(Some(version)) => {
+                    update::set_status(update::Status::Available(version.clone()));
+                    start_install(&proxy, version);
                 }
-            }
+                Ok(None) => {
+                    update::set_status(update::Status::Idle);
+                    installer::announce(&format!("PhaciusKey {} is up to date.", update::CURRENT));
+                }
+                Err(e) => {
+                    update::set_status(update::Status::Failed(e.clone()));
+                    installer::announce(&format!("Could not check for updates.\n\n{e}"));
+                }
+            },
             Event::UserEvent(UserEvent::StateChanged) => {
-                if let Some(tray) = &tray {
-                    tray.refresh(&state::settings(), state::current_app().as_deref());
-                }
-                if let Some(win) = &settings_win {
-                    win.push_state();
-                }
+                push_state(&tray, &settings_win, &panel);
             }
-            Event::UserEvent(UserEvent::Ipc(msg)) => {
+            Event::UserEvent(UserEvent::Ipc(surface, msg)) => {
                 match ui::apply_ipc(&msg) {
-                    Some(WindowAction::Close) => {
-                        if let Some(win) = &settings_win {
-                            win.hide();
+                    Some(WindowAction::Close) => match surface {
+                        Surface::Panel => {
+                            if let Some(panel) = &panel {
+                                panel.hide();
+                            }
                         }
-                    }
+                        Surface::Settings => {
+                            if let Some(win) = &settings_win {
+                                win.hide();
+                            }
+                        }
+                    },
                     Some(WindowAction::Drag) => {
                         if let Some(win) = &settings_win {
                             win.drag();
                         }
                     }
-                    Some(WindowAction::OpenSettings) => {
-                        open_settings(&mut settings_win, target, &proxy);
-                    }
-                    Some(WindowAction::CheckUpdates) => {
-                        match tray.as_ref().and_then(Tray::available_version) {
-                            Some(version) => {
-                                if let Some(tray) = &tray {
-                                    start_install(tray, &proxy, version);
-                                }
-                            }
-                            None => {
-                                update::set_status(update::Status::Checking);
-                                if let Some(tray) = &tray {
-                                    tray.set_update_checking();
-                                }
-                                let proxy = proxy.clone();
-                                std::thread::spawn(move || {
-                                    let _ = proxy.send_event(UserEvent::UpdateCheckDone(
-                                        update::check_for_newer(),
-                                    ));
-                                });
-                            }
+                    Some(WindowAction::Resize(height)) => {
+                        if let Some(panel) = &panel {
+                            panel.set_content_height(f64::from(height), target);
                         }
                     }
+                    Some(WindowAction::OpenSettings) => {
+                        if let Some(panel) = &panel {
+                            panel.hide();
+                        }
+                        open_settings(&mut settings_win, target, &proxy);
+                    }
+                    Some(WindowAction::CheckUpdates) => match update::available_version() {
+                        Some(version) => start_install(&proxy, version),
+                        None => {
+                            update::set_status(update::Status::Checking);
+                            let proxy = proxy.clone();
+                            std::thread::spawn(move || {
+                                let _ = proxy.send_event(UserEvent::UpdateCheckDone(
+                                    update::check_for_newer(),
+                                ));
+                            });
+                        }
+                    },
                     Some(WindowAction::Quit) => *control_flow = ControlFlow::Exit,
                     None => {}
                 }
-                if let Some(tray) = &tray {
-                    tray.refresh(&state::settings(), state::current_app().as_deref());
-                }
-                if let Some(win) = &settings_win {
-                    win.push_state();
-                }
+                push_state(&tray, &settings_win, &panel);
             }
             Event::WindowEvent {
                 event: tao::event::WindowEvent::CloseRequested,
@@ -225,6 +216,19 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 if let Some(win) = &settings_win {
                     if win.window_id() == window_id {
                         win.hide();
+                    }
+                }
+            }
+            // Clicking away from the panel dismisses it, the way the menu it
+            // replaced behaved.
+            Event::WindowEvent {
+                event: tao::event::WindowEvent::Focused(false),
+                window_id,
+                ..
+            } => {
+                if let Some(panel) = &panel {
+                    if panel.window_id() == window_id {
+                        panel.dismiss();
                     }
                 }
             }
@@ -241,15 +245,26 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             }
         }
 
-        while let Ok(menu_event) = menu_channel.try_recv() {
-            if let Some(tray) = &tray {
-                if menu_event.id == tray.settings.id() {
-                    open_settings(&mut settings_win, target, &proxy);
-                    continue;
+        while let Ok(tray_event) = tray_channel.try_recv() {
+            if let TrayIconEvent::Click {
+                rect,
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = tray_event
+            {
+                if let Some(panel) = &panel {
+                    panel.toggle(rect, target);
                 }
-                handle_menu_event(tray, &proxy, &menu_event.id, control_flow);
-                if let Some(win) = &settings_win {
-                    win.push_state();
+            }
+        }
+
+        while let Ok(menu_event) = menu_channel.try_recv() {
+            if let Some(fallback) = tray.as_ref().and_then(Tray::fallback) {
+                if menu_event.id == fallback.settings.id() {
+                    open_settings(&mut settings_win, target, &proxy);
+                } else if menu_event.id == fallback.quit.id() {
+                    *control_flow = ControlFlow::Exit;
                 }
             }
         }
@@ -262,6 +277,22 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             };
         }
     })
+}
+
+/// Every surface renders the same state, so they are all refreshed together
+/// rather than each one being remembered at each call site.
+fn push_state(tray: &Option<Tray>, settings_win: &Option<SettingsWindow>, panel: &Option<Panel>) {
+    if let Some(tray) = tray {
+        tray.refresh(&state::settings(), state::current_app().as_deref());
+    }
+    if let Some(win) = settings_win {
+        win.push_state();
+    }
+    if let Some(panel) = panel {
+        if panel.is_visible() {
+            panel.push_state();
+        }
+    }
 }
 
 fn open_settings(
@@ -346,10 +377,9 @@ fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
     });
 }
 
-fn start_install(tray: &Tray, proxy: &EventLoopProxy<UserEvent>, version: String) {
+fn start_install(proxy: &EventLoopProxy<UserEvent>, version: String) {
     if installer::app_bundle().is_some() {
         update::set_status(update::Status::Installing(version.clone()));
-        tray.set_update_installing(&version);
         spawn_update_install(proxy.clone(), version);
     } else {
         update::open_url(&update::releases_url());
@@ -367,55 +397,6 @@ fn announce_completed_update() {
     if previous.as_deref() != Some(update::CURRENT) {
         state::update(|s| s.last_seen_version = Some(update::CURRENT.to_string()));
     }
-}
-
-fn handle_menu_event(
-    tray: &Tray,
-    proxy: &EventLoopProxy<UserEvent>,
-    id: &MenuId,
-    control_flow: &mut ControlFlow,
-) {
-    use config::{Method, Placement};
-
-    if id == tray.quit.id() {
-        *control_flow = ControlFlow::Exit;
-        return;
-    }
-    if id == tray.update.id() {
-        match tray.available_version() {
-            Some(version) => start_install(tray, proxy, version),
-            None => {
-                tray.set_update_checking();
-                let proxy = proxy.clone();
-                std::thread::spawn(move || {
-                    let _ = proxy.send_event(UserEvent::UpdateCheckDone(update::check_for_newer()));
-                });
-            }
-        }
-        return;
-    }
-    if id == tray.report.id() {
-        update::open_url(&update::new_issue_url());
-        return;
-    }
-
-    let updated = if id == tray.toggle.id() {
-        state::toggle_vietnamese()
-    } else if id == tray.telex.id() {
-        state::update(|s| s.method = Method::Telex)
-    } else if id == tray.vni.id() {
-        state::update(|s| s.method = Method::Vni)
-    } else if id == tray.modern.id() {
-        state::update(|s| s.placement = Placement::Modern)
-    } else if id == tray.classic.id() {
-        state::update(|s| s.placement = Placement::Classic)
-    } else if id == tray.auto_restore.id() {
-        state::update(|s| s.auto_restore = !s.auto_restore)
-    } else {
-        return;
-    };
-
-    tray.refresh(&updated, state::current_app().as_deref());
 }
 
 pub(crate) fn open_config_file() {

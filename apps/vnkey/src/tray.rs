@@ -1,127 +1,30 @@
-use std::cell::RefCell;
 use std::io;
 use std::path::Path;
 
-use tray_icon::menu::accelerator::{Accelerator, Code, Modifiers};
-use tray_icon::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tray_icon::menu::{Menu, MenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use crate::config::{parse_shortcut, Method, Placement, Settings, Shortcut};
+use crate::config::Settings;
 use crate::png_write;
-use crate::update;
 
+/// The icon, and nothing else by default: what used to be a native menu is now
+/// a panel we draw, so that it can share the settings window's theme.
 pub struct Tray {
     tray: TrayIcon,
-    status: MenuItem,
-    pub toggle: CheckMenuItem,
-    method_menu: Submenu,
-    tone_menu: Submenu,
-    pub telex: CheckMenuItem,
-    pub vni: CheckMenuItem,
-    pub modern: CheckMenuItem,
-    pub classic: CheckMenuItem,
-    pub auto_restore: CheckMenuItem,
+    fallback: Option<Fallback>,
+}
+
+/// Attached only when the panel could not be built. Without the native menu
+/// there is no other way to reach settings or to quit, and a menu-bar-only
+/// application the user cannot quit is worse than an unstyled menu.
+pub struct Fallback {
     pub settings: MenuItem,
-    pub update: MenuItem,
-    pub report: MenuItem,
     pub quit: MenuItem,
-    available: RefCell<Option<String>>,
 }
 
 impl Tray {
     pub fn new(settings: &Settings) -> Result<Self, String> {
-        let err = |e: tray_icon::menu::Error| e.to_string();
-
-        let header = MenuItem::new(format!("PhaciusKey  v{}", update::CURRENT), false, None);
-        let status = MenuItem::new("Type anywhere to begin", false, None);
-
-        let accel = parse_shortcut(&settings.toggle_shortcut).and_then(accelerator_for);
-        let toggle = CheckMenuItem::new("Vietnamese typing", true, settings.enabled, accel);
-
-        let telex = CheckMenuItem::new("Telex", true, settings.method == Method::Telex, None);
-        let vni = CheckMenuItem::new("VNI", true, settings.method == Method::Vni, None);
-        let method_menu = Submenu::new(method_title(settings), true);
-        method_menu.append_items(&[&telex, &vni]).map_err(err)?;
-
-        let modern = CheckMenuItem::new(
-            "Modern  ·  hòa",
-            true,
-            settings.placement == Placement::Modern,
-            None,
-        );
-        let classic = CheckMenuItem::new(
-            "Classic  ·  hoà",
-            true,
-            settings.placement == Placement::Classic,
-            None,
-        );
-        let tone_menu = Submenu::new(tone_title(settings), true);
-        tone_menu.append_items(&[&modern, &classic]).map_err(err)?;
-
-        let auto_restore = CheckMenuItem::new(
-            "Auto-restore English words",
-            true,
-            settings.auto_restore,
-            None,
-        );
-
-        let settings_item = MenuItem::new("Settings…", true, None);
-
-        let report = MenuItem::new("Report an issue…", true, None);
-        let help_menu = Submenu::new("Help", true);
-        help_menu
-            .append_items(&[
-                &MenuItem::new(
-                    "Telex:  aa â · ee ê · oo ô · ow ơ · uw ư · aw ă · dd đ",
-                    false,
-                    None,
-                ),
-                &MenuItem::new(
-                    "Telex tones:  s sắc · f huyền · r hỏi · x ngã · j nặng · z xoá",
-                    false,
-                    None,
-                ),
-                &MenuItem::new(
-                    "VNI:  6 â ê ô · 7 ơ ư · 8 ă · 9 đ · 1–5 tones · 0 xoá",
-                    false,
-                    None,
-                ),
-                &MenuItem::new(
-                    "Esc:  restore the word exactly as you typed it",
-                    false,
-                    None,
-                ),
-                &PredefinedMenuItem::separator(),
-                &report,
-            ])
-            .map_err(err)?;
-
-        let update = MenuItem::new("Check for updates…", true, None);
-        let quit = MenuItem::new("Quit PhaciusKey", true, None);
-
-        let menu = Menu::new();
-        let sep = PredefinedMenuItem::separator;
-        menu.append_items(&[
-            &header,
-            &status,
-            &sep(),
-            &toggle,
-            &sep(),
-            &method_menu,
-            &tone_menu,
-            &auto_restore,
-            &sep(),
-            &settings_item,
-            &help_menu,
-            &sep(),
-            &update,
-            &sep(),
-            &quit,
-        ])
-        .map_err(err)?;
-
         let tray = TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
             .with_icon(status_icon(settings.enabled).ok_or("failed to render the tray icon")?)
             .with_tooltip("PhaciusKey — Vietnamese input")
             .build()
@@ -129,52 +32,31 @@ impl Tray {
 
         Ok(Self {
             tray,
-            status,
-            toggle,
-            method_menu,
-            tone_menu,
-            telex,
-            vni,
-            modern,
-            classic,
-            auto_restore,
-            settings: settings_item,
-            update,
-            report,
-            quit,
-            available: RefCell::new(None),
+            fallback: None,
         })
     }
 
-    pub fn set_update_available(&self, version: &str) {
-        *self.available.borrow_mut() = Some(version.to_string());
-        self.update.set_text(format!("⬇ Update to v{version} now"));
-        self.update.set_enabled(true);
+    pub fn fallback(&self) -> Option<&Fallback> {
+        self.fallback.as_ref()
     }
 
-    pub fn available_version(&self) -> Option<String> {
-        self.available.borrow().clone()
-    }
+    /// Attaching a menu means the icon opens it instead of reporting the click,
+    /// which is exactly what is wanted once there is no panel to open.
+    pub fn attach_fallback_menu(&mut self) -> Result<(), String> {
+        let err = |e: tray_icon::menu::Error| e.to_string();
 
-    pub fn set_update_checking(&self) {
-        self.update.set_text("Checking for updates…");
-        self.update.set_enabled(false);
-    }
+        let settings = MenuItem::new("Settings…", true, None);
+        let quit = MenuItem::new("Quit PhaciusKey", true, None);
+        let menu = Menu::new();
+        menu.append_items(&[&settings, &quit]).map_err(err)?;
+        self.tray.set_menu(Some(Box::new(menu)));
 
-    pub fn set_update_installing(&self, version: &str) {
-        self.update.set_text(format!("Installing v{version}…"));
-        self.update.set_enabled(false);
-    }
-
-    pub fn set_update_idle(&self) {
-        self.update.set_text("Check for updates…");
-        self.update.set_enabled(true);
+        self.fallback = Some(Fallback { settings, quit });
+        Ok(())
     }
 
     pub fn refresh(&self, settings: &Settings, current_app: Option<&str>) {
         let effective = settings.vietnamese_on(current_app);
-
-        self.toggle.set_checked(settings.enabled);
 
         let status = if crate::platform::secure_input_active() {
             "⚠ Secure input on — Vietnamese paused (password field?)".to_string()
@@ -187,79 +69,12 @@ impl Tray {
                 None => "Type anywhere to begin".to_string(),
             }
         };
-        self.status.set_text(&status);
         let _ = self
             .tray
             .set_tooltip(Some(format!("PhaciusKey — {status}")));
 
-        let _ = self
-            .toggle
-            .set_accelerator(parse_shortcut(&settings.toggle_shortcut).and_then(accelerator_for));
-
-        self.method_menu.set_text(method_title(settings));
-        self.tone_menu.set_text(tone_title(settings));
-        self.telex.set_checked(settings.method == Method::Telex);
-        self.vni.set_checked(settings.method == Method::Vni);
-        self.modern
-            .set_checked(settings.placement == Placement::Modern);
-        self.classic
-            .set_checked(settings.placement == Placement::Classic);
-        self.auto_restore.set_checked(settings.auto_restore);
-
         let _ = self.tray.set_icon(status_icon(effective));
     }
-}
-
-fn method_title(settings: &Settings) -> String {
-    format!(
-        "Input method  ·  {}",
-        match settings.method {
-            Method::Telex => "Telex",
-            Method::Vni => "VNI",
-        }
-    )
-}
-
-fn tone_title(settings: &Settings) -> String {
-    format!(
-        "Tone placement  ·  {}",
-        match settings.placement {
-            Placement::Modern => "Modern",
-            Placement::Classic => "Classic",
-        }
-    )
-}
-
-#[rustfmt::skip]
-fn accelerator_for(sc: Shortcut) -> Option<Accelerator> {
-    let mut mods = Modifiers::empty();
-    if sc.ctrl {
-        mods |= Modifiers::CONTROL;
-    }
-    if sc.shift {
-        mods |= Modifiers::SHIFT;
-    }
-    if sc.alt {
-        mods |= Modifiers::ALT;
-    }
-    if sc.cmd {
-        mods |= Modifiers::SUPER;
-    }
-    let code = match sc.key {
-        'a' => Code::KeyA, 'b' => Code::KeyB, 'c' => Code::KeyC, 'd' => Code::KeyD,
-        'e' => Code::KeyE, 'f' => Code::KeyF, 'g' => Code::KeyG, 'h' => Code::KeyH,
-        'i' => Code::KeyI, 'j' => Code::KeyJ, 'k' => Code::KeyK, 'l' => Code::KeyL,
-        'm' => Code::KeyM, 'n' => Code::KeyN, 'o' => Code::KeyO, 'p' => Code::KeyP,
-        'q' => Code::KeyQ, 'r' => Code::KeyR, 's' => Code::KeyS, 't' => Code::KeyT,
-        'u' => Code::KeyU, 'v' => Code::KeyV, 'w' => Code::KeyW, 'x' => Code::KeyX,
-        'y' => Code::KeyY, 'z' => Code::KeyZ,
-        '0' => Code::Digit0, '1' => Code::Digit1, '2' => Code::Digit2, '3' => Code::Digit3,
-        '4' => Code::Digit4, '5' => Code::Digit5, '6' => Code::Digit6, '7' => Code::Digit7,
-        '8' => Code::Digit8, '9' => Code::Digit9,
-        ' ' => Code::Space,
-        _ => return None,
-    };
-    Some(Accelerator::new(Some(mods), code))
 }
 
 fn status_icon(enabled: bool) -> Option<Icon> {

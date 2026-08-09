@@ -30,6 +30,8 @@ pub enum WindowAction {
     Quit,
     OpenSettings,
     CheckUpdates,
+    /// The panel measured its content and wants the window to match.
+    Resize(u32),
 }
 
 /// The wire format the pages speak. Deserialising into a tagged enum, rather
@@ -85,6 +87,9 @@ enum Cmd {
     CloseWindow,
     OpenSettings,
     Quit,
+    PanelHeight {
+        height: u32,
+    },
 }
 
 pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
@@ -148,6 +153,7 @@ pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
         Cmd::CloseWindow => return Some(WindowAction::Close),
         Cmd::OpenSettings => return Some(WindowAction::OpenSettings),
         Cmd::Quit => return Some(WindowAction::Quit),
+        Cmd::PanelHeight { height } => return Some(WindowAction::Resize(height)),
     }
     None
 }
@@ -325,6 +331,7 @@ mod tests {
             r#"{"cmd":"close_window"}"#,
             r#"{"cmd":"open_settings"}"#,
             r#"{"cmd":"quit"}"#,
+            r#"{"cmd":"panel_height","height":312}"#,
         ] {
             assert!(
                 serde_json::from_str::<Cmd>(msg).is_ok(),

@@ -1,11 +1,22 @@
 mod ipc;
+mod panel;
 mod payload;
 mod settings;
 
 pub use ipc::{apply_ipc, WindowAction};
+pub use panel::Panel;
 pub use settings::SettingsWindow;
 
 const THEME: &str = include_str!("assets/theme.css");
+
+/// Which window a message came from. The two surfaces speak the same commands —
+/// `close_window` means "hide me" to both — so the origin is what decides which
+/// window a window action lands on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
+    Panel,
+    Settings,
+}
 
 /// Assembles one page from the shared theme and a surface's own parts. Keeping
 /// the theme in a single file is what makes the surfaces look like one

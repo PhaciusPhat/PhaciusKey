@@ -27,6 +27,14 @@ impl Status {
         }
     }
 
+    /// The version the status is about, when it is about one.
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            Status::Available(v) | Status::Installing(v) => Some(v),
+            Status::Idle | Status::Checking | Status::Failed(_) => None,
+        }
+    }
+
     pub fn detail(&self) -> String {
         match self {
             Status::Idle => format!("{CURRENT} — up to date"),
@@ -42,6 +50,15 @@ static STATUS: std::sync::Mutex<Status> = std::sync::Mutex::new(Status::Idle);
 
 pub fn status() -> Status {
     STATUS.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+/// A version waiting to be installed. `Installing` is deliberately not one:
+/// that install is already under way.
+pub fn available_version() -> Option<String> {
+    match status() {
+        Status::Available(v) => Some(v),
+        Status::Idle | Status::Checking | Status::Installing(_) | Status::Failed(_) => None,
+    }
 }
 
 pub fn set_status(next: Status) {
