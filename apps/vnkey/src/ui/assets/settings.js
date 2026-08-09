@@ -68,8 +68,12 @@
   var lastParts = [];
   var lastHint = shortcutHint.textContent;
   var MODS = ["⌃", "⌥", "⇧", "⌘"]; // control, option, shift, command
-  var ASK = "Hold one or two modifiers and press a letter, digit or space. Esc cancels.";
+  var ASK = "Hold modifiers, then press a key — or just let go.";
   var TOO_MANY = "That’s too many — three keys at most.";
+  var NEED_TWO = "Use two modifiers, or add a key.";
+  var peak = 0;
+  var peakMods = [];
+  var usedKey = false;
 
   function heldMods(e) {
     var held = [e.ctrlKey, e.altKey, e.shiftKey, e.metaKey];
@@ -87,6 +91,9 @@
   function startRecording() {
     if (recording) return stopRecording();
     recording = true;
+    peak = 0;
+    peakMods = [];
+    usedKey = false;
     shortcut.classList.add("rec-on");
     shortcut.focus();
     renderCaps(shortcut, [], true);
@@ -128,10 +135,13 @@
 
     if (e.key === "Escape") return stopRecording();
 
-    // A modifier on its own is not a shortcut yet — show what is held so far.
+    // A modifier on its own is not reported yet — the release handler below
+    // reports the peak set once the whole gesture is known.
     if (["Control", "Alt", "Shift", "Meta"].indexOf(e.key) !== -1) {
-      renderCaps(shortcut, heldMods(e), true);
-      setHint(heldCount(e) > 2 ? TOO_MANY : ASK);
+      var mods = heldMods(e);
+      if (mods.length >= peak) { peak = mods.length; peakMods = mods; }
+      renderCaps(shortcut, mods, true);
+      setHint(mods.length > 3 ? TOO_MANY : ASK);
       return;
     }
 
@@ -149,6 +159,7 @@
       return;
     }
 
+    usedKey = true;
     send({
       cmd: "shortcut_capture",
       code: e.code,
@@ -159,7 +170,25 @@
 
   // Key releases must not leak to the page either while the recorder is armed.
   document.addEventListener("keyup", function (e) {
-    if (recording) { e.preventDefault(); e.stopPropagation(); }
+    if (!recording) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    var stillHeld = e.ctrlKey || e.altKey || e.shiftKey || e.metaKey;
+    if (stillHeld || usedKey) return;
+
+    if (peak < 2) return setHint(NEED_TWO);
+    if (peak > 3) return setHint(TOO_MANY);
+
+    send({
+      cmd: "shortcut_capture",
+      code: null,
+      ctrl: peakMods.indexOf("⌃") !== -1,
+      alt: peakMods.indexOf("⌥") !== -1,
+      shift: peakMods.indexOf("⇧") !== -1,
+      meta: peakMods.indexOf("⌘") !== -1,
+    });
+    stopRecording();
   }, true);
 
   // ---- List editors ----

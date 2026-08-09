@@ -69,7 +69,7 @@ enum Cmd {
         on: bool,
     },
     ShortcutCapture {
-        code: String,
+        code: Option<String>,
         ctrl: bool,
         alt: bool,
         shift: bool,
@@ -137,7 +137,7 @@ pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
             shift,
             meta,
         } => {
-            if let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, Some(&code)) {
+            if let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, code.as_deref()) {
                 state::update(move |s| s.toggle_shortcut = shortcut);
             }
         }
@@ -290,7 +290,7 @@ mod tests {
                     "alt":false,"shift":true,"meta":false}"#
             ),
             Cmd::ShortcutCapture {
-                code: "KeyV".to_string(),
+                code: Some("KeyV".to_string()),
                 ctrl: true,
                 alt: false,
                 shift: true,
@@ -309,6 +309,23 @@ mod tests {
     }
 
     #[test]
+    fn a_capture_may_arrive_without_a_key() {
+        assert_eq!(
+            parse(
+                r#"{"cmd":"shortcut_capture","code":null,"ctrl":true,
+                    "alt":false,"shift":true,"meta":false}"#
+            ),
+            Cmd::ShortcutCapture {
+                code: None,
+                ctrl: true,
+                alt: false,
+                shift: true,
+                meta: false,
+            }
+        );
+    }
+
+    #[test]
     fn every_command_the_pages_send_is_understood() {
         for msg in [
             r#"{"cmd":"init"}"#,
@@ -321,6 +338,8 @@ mod tests {
             r#"{"cmd":"slow_app","name":"IntelliJ IDEA","on":true}"#,
             r#"{"cmd":"autocomplete_app","name":"Safari","on":false}"#,
             r#"{"cmd":"shortcut_record","on":true}"#,
+            r#"{"cmd":"shortcut_capture","code":null,"ctrl":true,
+                "alt":false,"shift":true,"meta":false}"#,
             r#"{"cmd":"macros_export"}"#,
             r#"{"cmd":"macros_import","text":"{}"}"#,
             r#"{"cmd":"open_config"}"#,
