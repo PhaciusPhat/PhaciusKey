@@ -374,6 +374,64 @@ pub fn shortcut_parts(shortcut: &str) -> Vec<String> {
     parts
 }
 
+#[allow(dead_code)]
+pub const MOD_CTRL: u8 = 1;
+#[allow(dead_code)]
+pub const MOD_SHIFT: u8 = 2;
+#[allow(dead_code)]
+pub const MOD_ALT: u8 = 4;
+#[allow(dead_code)]
+pub const MOD_CMD: u8 = 8;
+
+impl Shortcut {
+    #[allow(dead_code)]
+    pub fn modifier_mask(&self) -> u8 {
+        (if self.ctrl { MOD_CTRL } else { 0 })
+            | (if self.shift { MOD_SHIFT } else { 0 })
+            | (if self.alt { MOD_ALT } else { 0 })
+            | (if self.cmd { MOD_CMD } else { 0 })
+    }
+}
+
+/// Tracks a modifier-only shortcut across events, which cannot fire on press: the
+/// combination is a prefix of every `⌃⇧X` in every application.
+///
+/// `poisoned` outlives `armed` deliberately. Releasing a third modifier returns the held
+/// set to the target, and without it the gesture would re-arm mid-flight.
+#[derive(Debug, Default, Clone, Copy)]
+#[allow(dead_code)]
+pub struct ChordWatch {
+    armed: bool,
+    poisoned: bool,
+}
+
+#[allow(dead_code)]
+impl ChordWatch {
+    /// Returns true exactly once per clean gesture, on the release that empties the set.
+    pub fn modifiers(&mut self, held: u8, target: u8) -> bool {
+        if held == 0 {
+            let fired = self.armed;
+            self.armed = false;
+            self.poisoned = false;
+            return fired;
+        }
+        if held & !target != 0 {
+            self.armed = false;
+            self.poisoned = true;
+            return false;
+        }
+        if held == target && !self.poisoned {
+            self.armed = true;
+        }
+        false
+    }
+
+    pub fn interrupted(&mut self) {
+        self.armed = false;
+        self.poisoned = true;
+    }
+}
+
 /// The Windows virtual-key code a shortcut's key is delivered as.
 ///
 /// Here rather than beside the hook that uses it because CI lints the Windows
@@ -777,5 +835,55 @@ mod tests {
         settings.macros_enabled = false;
         assert!(settings.to_core(None).macros.is_empty());
         assert_eq!(settings.macros.len(), 1);
+    }
+
+    fn watch_sequence(target: u8, steps: &[u8]) -> usize {
+        let mut watch = ChordWatch::default();
+        steps.iter().filter(|held| watch.modifiers(**held, target)).count()
+    }
+
+    const CS: u8 = MOD_CTRL | MOD_SHIFT;
+
+    #[test]
+    fn a_clean_hold_and_release_fires_once() {
+        assert_eq!(watch_sequence(CS, &[MOD_CTRL, CS, MOD_CTRL, 0]), 1);
+    }
+
+    #[test]
+    fn either_modifier_may_be_released_first() {
+        assert_eq!(watch_sequence(CS, &[MOD_SHIFT, CS, MOD_SHIFT, 0]), 1);
+    }
+
+    #[test]
+    fn a_third_modifier_spoils_the_gesture_even_once_released() {
+        assert_eq!(
+            watch_sequence(CS, &[MOD_CTRL, CS, CS | MOD_ALT, CS, MOD_CTRL, 0]),
+            0
+        );
+    }
+
+    #[test]
+    fn a_key_pressed_between_spoils_the_gesture() {
+        let mut watch = ChordWatch::default();
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(CS, CS));
+        watch.interrupted();
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(0, CS));
+    }
+
+    #[test]
+    fn a_partial_hold_never_fires() {
+        assert_eq!(watch_sequence(CS, &[MOD_CTRL, 0]), 0);
+    }
+
+    #[test]
+    fn the_gesture_can_be_repeated() {
+        let mut watch = ChordWatch::default();
+        for _ in 0..2 {
+            assert!(!watch.modifiers(MOD_CTRL, CS));
+            assert!(!watch.modifiers(CS, CS));
+            assert!(watch.modifiers(0, CS));
+        }
     }
 }
