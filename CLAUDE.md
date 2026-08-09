@@ -1,4 +1,10 @@
-# phacius_vnkey
+# PhaciusKey
+
+## Changing code
+
+Invoke `commenting-only-constraints` and `rust-best-practices` before writing or
+editing code, not as a review pass afterwards. Read the skill rather than
+working from a memory of it.
 
 ## Comments
 
