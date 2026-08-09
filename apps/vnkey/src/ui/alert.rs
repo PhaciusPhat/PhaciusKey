@@ -3,7 +3,7 @@ use std::cell::Cell;
 use serde_json::json;
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
-use tao::window::{Window, WindowBuilder, WindowId};
+use tao::window::{Window, WindowBuilder};
 use wry::WebView;
 
 use super::panel::Rect;
@@ -73,11 +73,6 @@ impl Alert {
             webview,
             height: Cell::new(INITIAL_HEIGHT),
         })
-    }
-
-    #[allow(dead_code)]
-    pub fn window_id(&self) -> WindowId {
-        self.window.id()
     }
 
     pub fn show(&self, notice: &Notice, target: &EventLoopWindowTarget<UserEvent>) {
