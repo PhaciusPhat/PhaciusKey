@@ -1,51 +1,17 @@
-//! In-place self-update: download the new release, swap the app bundle, relaunch.
-//!
-//! # The Accessibility caveat
-//!
-//! macOS binds the Accessibility (TCC) grant to the app's **code signature**.
-//! Replacing the bundle keeps the grant only if the new bundle carries the *same*
-//! stable signing identity. Published releases are all signed with the shared
-//! `phaciuskey-release` certificate (see CONTRIBUTING.md → Releasing), so the
-//! grant survives updates between them. An ad-hoc build
-//! (`PHACIUSKEY_ALLOW_ADHOC=1`, or `codesign --sign -`) mints a fresh identity
-//! per build — after updating one of those, macOS treats the app as a different
-//! program and asks for Accessibility again.
-//!
-//! [`install`] therefore reports whether the grant survived, and the app tells
-//! the user the truth either way rather than silently stopping working.
-//!
-//! # Safety of the swap
-//!
-//! The download is verified with `codesign --verify` before anything is touched
-//! (this catches a truncated or corrupt DMG even for ad-hoc signatures). The old
-//! bundle is moved aside rather than deleted, and restored if the copy fails, so
-//! a failed update leaves a working app. Nothing runs unless the process is
-//! actually inside a `.app` — a `cargo run` build never self-updates.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// What an update did, for the message shown to the user afterwards.
 pub struct Outcome {
-    /// Version that was installed.
     pub version: String,
-    /// Whether Accessibility permission survived the swap. False with ad-hoc
-    /// signing, so the user has to re-grant it — see the module docs.
     pub permission_kept: bool,
 }
 
-/// The `.app` bundle this process is running from, or `None` when it is not
-/// inside one (`cargo run`, a bare binary). Self-update is skipped when `None`.
 pub fn app_bundle() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    // …/PhaciusKey.app/Contents/MacOS/vnkey → …/PhaciusKey.app
     let bundle = exe.parent()?.parent()?.parent()?;
     (bundle.extension()?.eq_ignore_ascii_case("app")).then(|| bundle.to_path_buf())
 }
 
-/// Download release `version` and replace the running bundle with it.
-///
-/// Blocking and slow (network + disk); run on a background thread.
 #[cfg(target_os = "macos")]
 pub fn install(version: &str) -> Result<Outcome, String> {
     let target = app_bundle().ok_or("not running from a .app bundle; skipping self-update")?;
@@ -85,7 +51,6 @@ pub fn install(version: &str) -> Result<Outcome, String> {
     )
     .map_err(|e| format!("could not mount {}: {e}", dmg.display()))?;
 
-    // From here on, always unmount before returning.
     let staged = work.join("PhaciusKey.app");
     let result = stage_from_mount(&mount, &staged);
     let _ = run("hdiutil", &["detach", "-quiet", &mount.to_string_lossy()]);
@@ -96,8 +61,6 @@ pub fn install(version: &str) -> Result<Outcome, String> {
 
     Ok(Outcome {
         version: version.to_string(),
-        // Re-read the live TCC state rather than assuming: if the user ever moves
-        // to a stable Developer ID signature this starts reporting true on its own.
         permission_kept: crate::platform::permission_granted(),
     })
 }
@@ -107,8 +70,6 @@ pub fn install(_version: &str) -> Result<Outcome, String> {
     Err("in-place self-update is implemented for macOS only".into())
 }
 
-/// Copy the app out of the mounted DMG and verify it before it goes anywhere near
-/// the installed bundle.
 #[cfg(target_os = "macos")]
 fn stage_from_mount(mount: &Path, staged: &Path) -> Result<(), String> {
     let src = mount.join("PhaciusKey.app");
@@ -116,24 +77,18 @@ fn stage_from_mount(mount: &Path, staged: &Path) -> Result<(), String> {
         return Err(format!("{} not found in the disk image", src.display()));
     }
 
-    // Verifies the bundle hashes; catches a truncated or tampered download even
-    // though the signature itself is ad-hoc.
     run(
         "codesign",
         &["--verify", "--deep", "--strict", &src.to_string_lossy()],
     )
     .map_err(|e| format!("downloaded app failed signature verification: {e}"))?;
 
-    // `ditto` (not fs::copy) preserves the bundle's symlinks, extended
-    // attributes and signature.
     run(
         "ditto",
         &[&src.to_string_lossy(), &staged.to_string_lossy()],
     )
     .map_err(|e| format!("could not stage the new app: {e}"))?;
 
-    // curl-downloaded files are quarantined; left in place, Gatekeeper would
-    // block the relaunch of this unnotarized build.
     let _ = run(
         "xattr",
         &["-dr", "com.apple.quarantine", &staged.to_string_lossy()],
@@ -142,7 +97,6 @@ fn stage_from_mount(mount: &Path, staged: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Replace `target` with `staged`, keeping the old bundle until the copy lands.
 #[cfg(target_os = "macos")]
 fn swap_in_place(staged: &Path, target: &Path) -> Result<(), String> {
     let backup = target.with_file_name(format!(
@@ -154,12 +108,10 @@ fn swap_in_place(staged: &Path, target: &Path) -> Result<(), String> {
     std::fs::rename(target, &backup)
         .map_err(|e| format!("cannot move the current app aside (need write access?): {e}"))?;
 
-    // Cross-volume, so copy rather than rename.
     if let Err(e) = run(
         "ditto",
         &[&staged.to_string_lossy(), &target.to_string_lossy()],
     ) {
-        // Put the working app back before giving up.
         let _ = std::fs::remove_dir_all(target);
         let _ = std::fs::rename(&backup, target);
         return Err(format!("install failed, previous version restored: {e}"));
@@ -167,10 +119,6 @@ fn swap_in_place(staged: &Path, target: &Path) -> Result<(), String> {
 
     let _ = std::fs::remove_dir_all(&backup);
 
-    // Strip quarantine again at the installed path. It was already cleared on the
-    // staged copy, but `ditto` propagates extended attributes, and a quarantine
-    // flag surviving here is exactly what makes macOS refuse to open the app
-    // ("PhaciusKey is damaged" / unidentified developer) on the relaunch below.
     let _ = run(
         "xattr",
         &["-dr", "com.apple.quarantine", &target.to_string_lossy()],
@@ -179,10 +127,6 @@ fn swap_in_place(staged: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Relaunch the bundle once this process has exited, then exit.
-///
-/// `open -n` cannot start the app while the old instance is still alive, so the
-/// helper waits for this PID to disappear first.
 pub fn relaunch_and_exit(app: &Path) -> ! {
     #[cfg(target_os = "macos")]
     {
@@ -199,18 +143,10 @@ pub fn relaunch_and_exit(app: &Path) -> ! {
     std::process::exit(0)
 }
 
-/// Show a modal "you were updated" dialog.
-///
-/// Spawned detached: `osascript` blocks until the user dismisses it, and this is
-/// called from the event loop.
 pub fn announce_update(from: &str, to: &str, needs_permission: bool) {
-    let mut body = format!(
-        "PhaciusKey has been updated from {from} to {to} and restarted automatically."
-    );
+    let mut body =
+        format!("PhaciusKey has been updated from {from} to {to} and restarted automatically.");
     if needs_permission {
-        // Be explicit: when the signing identity changed across the swap the
-        // grant cannot survive, and silently dead Vietnamese typing is far
-        // worse than saying so.
         body.push_str(
             "\n\nmacOS needs you to allow Accessibility once more, because this \
              update changed the app's code-signing identity. Open System Settings → \
@@ -221,12 +157,10 @@ pub fn announce_update(from: &str, to: &str, needs_permission: bool) {
     show_dialog(&body);
 }
 
-/// Show a plain informational dialog (e.g. "up to date" after a manual check).
 pub fn announce(body: &str) {
     show_dialog(body);
 }
 
-/// Tell the user an automatic update failed. They can still update by hand.
 pub fn announce_failure(version: &str, error: &str) {
     show_dialog(&format!(
         "PhaciusKey could not install version {version} automatically.\n\n{error}\n\n\
@@ -248,7 +182,6 @@ fn show_dialog(body: &str) {
     eprintln!("[vnkey] {body}");
 }
 
-/// Run a command, mapping a non-zero exit into an `Err` carrying its stderr.
 fn run(program: &str, args: &[&str]) -> Result<(), String> {
     let output = Command::new(program)
         .args(args)

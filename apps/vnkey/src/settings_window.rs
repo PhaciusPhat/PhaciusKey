@@ -1,13 +1,3 @@
-//! Glass settings window: a `tao` window hosting a `wry` WebView whose UI is
-//! the embedded `settings.html` (same "lacquer night" theme as the website).
-//!
-//! Data flow is one-directional in each direction: the page posts JSON
-//! commands over wry's IPC channel, which are forwarded to the main event
-//! loop as [`UserEvent::Ipc`] and applied here through `state::update`; after
-//! any change (from the page, the tray, or the toggle shortcut) the full
-//! settings snapshot is pushed back into the page via `evaluate_script`, so
-//! the window always mirrors reality instead of tracking its own copy.
-
 use std::cell::RefCell;
 use std::sync::Mutex;
 
@@ -25,13 +15,6 @@ use crate::{autostart, platform, state, update, UserEvent};
 
 const HTML: &str = include_str!("settings.html");
 
-/// A one-shot message for the page — the result of an import or export.
-///
-/// It rides along on the next state snapshot rather than being pushed
-/// separately, which keeps the page's single "state in, commands out" flow.
-/// Taken as it is read, so it shows once and not on every later refresh.
-/// Only the main loop touches it; the mutex is what a `static` needs, not
-/// contention control.
 static NOTICE: Mutex<Option<String>> = Mutex::new(None);
 
 fn set_notice(text: impl Into<String>) {
@@ -47,16 +30,10 @@ fn take_notice() -> Option<String> {
 pub struct SettingsWindow {
     window: Window,
     webview: WebView,
-    /// Installed applications feeding the page's app-search suggestions.
-    /// Scanned when the window is created and again on every `show`, so a
-    /// fresh install appears the next time the window opens — while the
-    /// frequent `push_state` calls never touch the filesystem.
     installed_apps: RefCell<Vec<String>>,
 }
 
 impl SettingsWindow {
-    /// Create the window and its webview. Must run on the main thread (both
-    /// tao windows and WKWebView require it).
     pub fn new(
         target: &EventLoopWindowTarget<UserEvent>,
         proxy: EventLoopProxy<UserEvent>,
@@ -70,8 +47,6 @@ impl SettingsWindow {
 
         let webview = wry::WebViewBuilder::new()
             .with_html(HTML)
-            // The page can't touch settings itself — it only posts commands,
-            // which the main loop applies via `apply_ipc`.
             .with_ipc_handler(move |request| {
                 let _ = proxy.send_event(UserEvent::Ipc(request.body().clone()));
             })
@@ -89,37 +64,30 @@ impl SettingsWindow {
         self.window.id()
     }
 
-    /// Bring the (possibly hidden) window back in front of the user.
     pub fn show(&self) {
         *self.installed_apps.borrow_mut() = platform::installed_apps();
         self.window.set_visible(true);
         self.window.set_focus();
     }
 
-    /// Closing the window only hides it — the app lives in the menu bar.
     pub fn hide(&self) {
-        // Closing the window mid-recording would otherwise leave the toggle
-        // shortcut suppressed with no way to disarm it.
         state::set_shortcut_recording(false);
         self.window.set_visible(false);
     }
 
-    /// Push the current settings snapshot into the page.
     pub fn push_state(&self) {
         let state = state_json(
             &state::settings(),
             state::current_app().as_deref(),
             &self.installed_apps.borrow(),
         );
-        let _ = self.webview.evaluate_script(&format!("window.__setState({state})"));
+        let _ = self
+            .webview
+            .evaluate_script(&format!("window.__setState({state})"));
     }
 }
 
-/// The page's state snapshot: settings, the derived per-app rows, and the
-/// installed apps offered as search suggestions.
 fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]) -> String {
-    // Union of every app the settings or this session knows about, keyed
-    // case-insensitively, preferring the real-cased name for display.
     let mut names: Vec<String> = Vec::new();
     let mut add = |name: &str| {
         if !names.iter().any(|n| n.eq_ignore_ascii_case(name)) {
@@ -140,10 +108,6 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
     }
     names.sort_by_key(|n| n.to_ascii_lowercase());
 
-    // Row state mirrors the tray's per-app checkbox: effective state in
-    // per-app mode, exclusion *intent* otherwise. Rendering effective state
-    // outside per-app mode would make every row a dead control while the
-    // master toggle is off (flipping one would snap straight back).
     let apps: Vec<Value> = names
         .iter()
         .map(|name| {
@@ -156,7 +120,6 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
         })
         .collect();
 
-    // BTreeMap keeps the macro list in a stable, sorted order across pushes.
     let macros: Vec<Value> = s
         .macros
         .iter()
@@ -175,9 +138,6 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
         "quick_end_consonant": s.quick_end_consonant,
         "auto_capitalize": s.auto_capitalize,
         "auto_update": s.auto_update,
-        // Live registration, not the stored copy: the user can switch the
-        // login item off in System Settings, and the page must not show a
-        // state macOS disagrees with.
         "start_at_login": autostart::effective(s.start_at_login),
         "per_app_mode": s.per_app_mode,
         "toggle_shortcut": s.toggle_shortcut,
@@ -195,20 +155,24 @@ fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[String]
     .to_string()
 }
 
-/// Apply one JSON command posted by the page. Malformed input is ignored —
-/// the page is trusted, but never load-bearing.
 pub fn apply_ipc(msg: &str) {
-    let Ok(v) = serde_json::from_str::<Value>(msg) else { return };
+    let Ok(v) = serde_json::from_str::<Value>(msg) else {
+        return;
+    };
     match v["cmd"].as_str() {
-        Some("init") => {} // no change; the caller pushes state after every command
+        Some("init") => {}
         Some("set") => apply_set(&v),
         Some("app") => {
-            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else { return };
+            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else {
+                return;
+            };
             let name = name.to_string();
             state::update(move |s| set_app_on(s, &name, on));
         }
         Some("app_remove") => {
-            let Some(name) = v["name"].as_str() else { return };
+            let Some(name) = v["name"].as_str() else {
+                return;
+            };
             let name = name.to_string();
             state::update(move |s| {
                 s.app_modes.remove(&name.to_ascii_lowercase());
@@ -222,8 +186,7 @@ pub fn apply_ipc(msg: &str) {
             });
         }
         Some("macro_set") => {
-            let (Some(trigger), Some(expansion)) =
-                (v["trigger"].as_str(), v["expansion"].as_str())
+            let (Some(trigger), Some(expansion)) = (v["trigger"].as_str(), v["expansion"].as_str())
             else {
                 return;
             };
@@ -237,14 +200,18 @@ pub fn apply_ipc(msg: &str) {
             });
         }
         Some("macro_remove") => {
-            let Some(trigger) = v["trigger"].as_str() else { return };
+            let Some(trigger) = v["trigger"].as_str() else {
+                return;
+            };
             let trigger = trigger.to_string();
             state::update(move |s| {
                 s.macros.remove(&trigger);
             });
         }
         Some("slow_app") => {
-            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else { return };
+            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else {
+                return;
+            };
             let name = name.to_string();
             state::update(move |s| {
                 s.slow_apps.retain(|a| !a.eq_ignore_ascii_case(&name));
@@ -255,25 +222,24 @@ pub fn apply_ipc(msg: &str) {
             });
         }
         Some("autocomplete_app") => {
-            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else { return };
+            let (Some(name), Some(on)) = (v["name"].as_str(), v["on"].as_bool()) else {
+                return;
+            };
             let name = name.to_string();
             state::update(move |s| {
-                s.autocomplete_fix_apps.retain(|a| !a.eq_ignore_ascii_case(&name));
+                s.autocomplete_fix_apps
+                    .retain(|a| !a.eq_ignore_ascii_case(&name));
                 if on {
                     s.autocomplete_fix_apps.push(name.clone());
-                    s.autocomplete_fix_apps.sort_by_key(|a| a.to_ascii_lowercase());
+                    s.autocomplete_fix_apps
+                        .sort_by_key(|a| a.to_ascii_lowercase());
                 }
             });
         }
-        // The page arms and disarms the recorder so the hook can hold the old
-        // shortcut back while candidate combinations are being pressed.
         Some("shortcut_record") => {
             let Some(on) = v["on"].as_bool() else { return };
             state::set_shortcut_recording(on);
         }
-        // A recorded key press, as raw event fields. Canonicalizing here keeps
-        // one source of truth with `parse_shortcut`, so the page cannot invent
-        // a shortcut string the hook would not recognize.
         Some("shortcut_capture") => {
             let code = v["code"].as_str().unwrap_or_default();
             let held = |name: &str| v[name].as_bool().unwrap_or(false);
@@ -286,7 +252,9 @@ pub fn apply_ipc(msg: &str) {
         }
         Some("macros_export") => export_macros(),
         Some("macros_import") => {
-            let Some(text) = v["text"].as_str() else { return };
+            let Some(text) = v["text"].as_str() else {
+                return;
+            };
             import_macros(text);
         }
         Some("open_config") => crate::open_config_file(),
@@ -294,12 +262,6 @@ pub fn apply_ipc(msg: &str) {
     }
 }
 
-/// Write the macro list next to the user's other downloads and reveal it.
-///
-/// A fixed filename in a predictable folder rather than a save panel: there is
-/// no file-dialog binding in this build, and "it is in Downloads, and Finder
-/// just highlighted it" needs no explaining. Re-exporting overwrites, so the
-/// file tracks the live list instead of accumulating copies.
 fn export_macros() {
     let settings = state::settings();
     if settings.macros.is_empty() {
@@ -318,12 +280,18 @@ fn export_macros() {
     }
 
     let count = settings.macros.len();
-    set_notice(format!("Exported {count} macro{} to {}", plural(count), path.display()));
+    set_notice(format!(
+        "Exported {count} macro{} to {}",
+        plural(count),
+        path.display()
+    ));
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg("-R").arg(&path).spawn();
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .spawn();
 }
 
-/// Merge an exported macro file into the current list.
 fn import_macros(text: &str) {
     let (incoming, skipped) = match parse_macro_export(text) {
         Ok(result) => result,
@@ -332,7 +300,10 @@ fn import_macros(text: &str) {
     if incoming.is_empty() {
         set_notice(match skipped {
             0 => "That file had no macros in it.".to_string(),
-            n => format!("Nothing usable in that file — {n} entr{} skipped", plural_y(n)),
+            n => format!(
+                "Nothing usable in that file — {n} entr{} skipped",
+                plural_y(n)
+            ),
         });
         return;
     }
@@ -369,10 +340,20 @@ fn plural_y(n: usize) -> &'static str {
 fn apply_set(v: &Value) {
     let Some(key) = v["key"].as_str() else { return };
     match key {
-        "enabled" | "auto_restore" | "auto_update" | "per_app_mode" | "start_at_login"
-        | "standalone_w" | "quick_telex" | "quick_start_consonant" | "quick_end_consonant"
-        | "auto_capitalize" | "macros_enabled" => {
-            let Some(on) = v["value"].as_bool() else { return };
+        "enabled"
+        | "auto_restore"
+        | "auto_update"
+        | "per_app_mode"
+        | "start_at_login"
+        | "standalone_w"
+        | "quick_telex"
+        | "quick_start_consonant"
+        | "quick_end_consonant"
+        | "auto_capitalize"
+        | "macros_enabled" => {
+            let Some(on) = v["value"].as_bool() else {
+                return;
+            };
             let key = key.to_string();
             let updated = state::update(|s| match key.as_str() {
                 "enabled" => s.enabled = on,
@@ -413,12 +394,6 @@ fn apply_set(v: &Value) {
     }
 }
 
-/// Set `app`'s Vietnamese state, using the same precedence the rest of the
-/// app does: turning ON lifts the hard exclusion and remembers "on"; turning
-/// OFF remembers "off" and adds the hard exclusion. The exclusion is written
-/// in both modes — it keeps the switch sticky-off either way, and
-/// `disabled_apps` preserves the display casing that `app_modes`' lowercased
-/// keys lose.
 fn set_app_on(s: &mut Settings, app: &str, on: bool) {
     if on {
         s.set_app_mode(app, true);

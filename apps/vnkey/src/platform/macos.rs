@@ -1,15 +1,3 @@
-//! macOS keyboard hook + text injection.
-//!
-//! Ports the Swift `KeyEventListener` + `ActionExecutor`. We call
-//! `CGEventTapCreate` through raw FFI (rather than the `core-graphics` safe
-//! wrapper) because that wrapper cannot *suppress* an event — an input method
-//! must swallow the original keystroke and inject replacement text, which
-//! requires returning `NULL` from the tap callback.
-//!
-//! Event creation uses the safe `core-graphics` API; posting goes through raw
-//! `CGEventTapPostEvent` (the wrapper only exposes `CGEventPost`, which is the
-//! wrong call from inside a tap callback — see `inject`).
-
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
@@ -34,21 +22,15 @@ use super::KeyboardHook;
 use crate::config;
 use crate::state;
 
-/// Sentinel written into `eventSourceUserData` of every event we synthesize, so
-/// the tap callback recognizes and ignores our own injected keystrokes rather
-/// than re-feeding them into the engine. ("VNKEY" in ASCII.)
 const SYNTHETIC_MARKER: i64 = 0x0056_4E4B_4559;
 
-/// Virtual key code for the Delete (Backspace) key.
 const VK_DELETE: u16 = 0x33;
-/// Return, Tab, Escape and keypad-Enter — handled by keycode, before the
-/// character path.
 const VK_RETURN: u16 = 0x24;
 const VK_TAB: u16 = 0x30;
 const VK_ESC: u16 = 0x35;
 const VK_KP_ENTER: u16 = 0x4C;
 
-// CGEventType raw values (passed to the tap callback as a u32).
+// CGEventType raw values, as passed to the tap callback.
 const ET_LEFT_MOUSE_DOWN: u32 = 1;
 const ET_RIGHT_MOUSE_DOWN: u32 = 3;
 const ET_KEY_DOWN: u32 = 10;
@@ -71,11 +53,6 @@ extern "C" {
         user_info: *mut c_void,
     ) -> CFMachPortRef;
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
-    /// Posts an event from inside a tap callback at this tap's position in the
-    /// event stream — the API designed for replacing a tapped keystroke.
-    /// Unlike `CGEventPost(kCGHIDEventTap, …)`, the posted event keeps its
-    /// order relative to keystrokes already in flight and is only seen by taps
-    /// *after* ours, so injected events never re-enter this callback.
     fn CGEventTapPostEvent(proxy: CGEventTapProxy, event: CGEventRefRaw);
     fn CGEventKeyboardGetUnicodeString(
         event: CGEventRefRaw,
@@ -93,31 +70,21 @@ extern "C" {
 
 #[link(name = "Carbon", kind = "framework")]
 extern "C" {
-    /// Whether any process holds Secure Event Input (HIToolbox).
     fn IsSecureEventInputEnabled() -> bool;
 }
 
-/// See [`super::secure_input_active`]. Safe to poll.
 pub(super) fn secure_input_active() -> bool {
     unsafe { IsSecureEventInputEnabled() }
 }
 
 extern "C" {
-    /// libproc: fills `buffer` with the executable path of `pid`. Returns the
-    /// path length, or <= 0 on failure. Part of libSystem — no extra link flag.
     fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
 }
 
 thread_local! {
-    /// The live tap's mach port, so the callback can re-enable it if macOS
-    /// disables the tap (on timeout or heavy user input).
     static TAP_PORT: Cell<CFMachPortRef> = const { Cell::new(ptr::null_mut()) };
 }
 
-/// Owns the event-tap thread. The tap runs on its **own thread with its own
-/// `CFRunLoop`**: tao's main run loop does not service arbitrary
-/// `CFRunLoopSource`s, so a tap added there never fires. A dedicated run loop is
-/// the reliable pattern.
 pub struct Hook {
     _thread: std::thread::JoinHandle<()>,
 }
@@ -130,7 +97,6 @@ impl KeyboardHook for Hook {
             .spawn(move || match create_tap() {
                 Ok(keepalive) => {
                     let _ = tx.send(Ok(()));
-                    // Block forever, servicing the tap on this thread's run loop.
                     CFRunLoop::run_current();
                     drop(keepalive);
                 }
@@ -148,17 +114,17 @@ impl KeyboardHook for Hook {
     }
 }
 
-/// Create + enable the tap on the current thread, returning the resources that
-/// must stay alive for the tap to keep working.
 fn create_tap() -> Result<(CFMachPort, CFRunLoopSource), String> {
     let mask: u64 = (1 << ET_KEY_DOWN) | (1 << ET_LEFT_MOUSE_DOWN) | (1 << ET_RIGHT_MOUSE_DOWN);
 
     // tap=HID(0), place=HeadInsert(0), options=Default(0).
     let port_ref = unsafe { CGEventTapCreate(0, 0, 0, mask, tap_callback, ptr::null_mut()) };
     if port_ref.is_null() {
-        return Err("Failed to create event tap. Grant Accessibility permission in \
+        return Err(
+            "Failed to create event tap. Grant Accessibility permission in \
                     System Settings → Privacy & Security → Accessibility."
-            .to_string());
+                .to_string(),
+        );
     }
 
     let port = unsafe { CFMachPort::wrap_under_create_rule(port_ref) };
@@ -176,8 +142,6 @@ fn create_tap() -> Result<(CFMachPort, CFRunLoopSource), String> {
     Ok((port, source))
 }
 
-/// The C-ABI tap callback. Returns the original event pointer to pass a key
-/// through, or `NULL` to swallow it.
 unsafe extern "C" fn tap_callback(
     proxy: CGEventTapProxy,
     etype: u32,
@@ -185,8 +149,6 @@ unsafe extern "C" fn tap_callback(
     _user_info: *mut c_void,
 ) -> CGEventRefRaw {
     match etype {
-        // macOS disables the tap if our callback runs too long; re-enable it,
-        // otherwise typing silently stops working for good.
         ET_TAP_DISABLED_BY_TIMEOUT | ET_TAP_DISABLED_BY_USER_INPUT => {
             TAP_PORT.with(|p| {
                 let port = p.get();
@@ -196,7 +158,6 @@ unsafe extern "C" fn tap_callback(
             });
             return event;
         }
-        // Reset composition when the user clicks somewhere new.
         ET_LEFT_MOUSE_DOWN | ET_RIGHT_MOUSE_DOWN => {
             state::reset();
             return event;
@@ -205,47 +166,32 @@ unsafe extern "C" fn tap_callback(
         _ => return event,
     }
 
-    // Borrow the event without taking ownership (the system still owns it).
+    // SAFETY: borrowed, not owned — the system still owns the event.
     let cg = ManuallyDrop::new(CGEvent::from_ptr(event as *mut _));
 
-    // Ignore events we injected ourselves.
     if cg.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == SYNTHETIC_MARKER {
         return event;
     }
 
     let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
 
-    // Track which app receives this keystroke, so per-app state and the tray
-    // menu's "Enable in <app>" item follow the user's focus. Done before the
-    // shortcut check: in per-app mode the toggle must apply to the app that
-    // received the combo, not to whichever app got the previous keystroke.
     let pid = cg.get_integer_value_field(EventField::EVENT_TARGET_UNIX_PROCESS_ID);
     if let Some(name) = app_name_for_pid(pid) {
         state::set_current_app(&name);
     }
 
-    // The on/off shortcut outranks everything below — it must work even while
-    // typing is disabled for the focused app, or the user could never re-enable
-    // from the keyboard. Auto-repeat is ignored, or holding the combo would
-    // flip the setting many times a second.
     if is_toggle_shortcut(keycode, cg.get_flags())
         && cg.get_integer_value_field(EventField::KEYBOARD_EVENT_AUTOREPEAT) == 0
     {
         state::toggle_vietnamese();
-        return ptr::null_mut(); // the combo is ours; don't let the app see it
+        return ptr::null_mut();
     }
 
     if !state::vietnamese_active() {
-        // Everything passes through untouched while typing is off here,
-        // including Backspace — the engine holds no composition.
         state::reset();
         return event;
     }
 
-    // Keys pressed with Command/Control/Option are shortcuts (⌘Tab, ⌃C, …), and
-    // Fn-flagged keys are arrows / function keys. None are Vietnamese input:
-    // reset composition (a shortcut is a word boundary) and pass them through
-    // untouched. Shift is intentionally excluded so capitals still compose.
     const SHORTCUT_FLAGS: CGEventFlags = CGEventFlags::from_bits_truncate(
         CGEventFlags::CGEventFlagCommand.bits()
             | CGEventFlags::CGEventFlagControl.bits()
@@ -257,26 +203,17 @@ unsafe extern "C" fn tap_callback(
         return event;
     }
 
-    // The Delete/Backspace key needs its own path: it must pop the last raw
-    // keystroke from the composition buffer (which can represent more than
-    // one on-screen character, e.g. telex "as" → "á") and redraw, rather than
-    // being read as a character and fed into the buffer like ordinary input.
     if keycode == VK_DELETE {
         let actions = state::backspace();
         if actions.is_empty() {
-            return event; // not composing — let the native Backspace run
+            return event;
         }
         if inject(proxy, &actions) {
-            return ptr::null_mut(); // we already redrew; swallow the original
+            return ptr::null_mut();
         }
-        // Injection unavailable: the native Backspace still deletes one
-        // displayed character, which is exactly what the engine recorded.
         return event;
     }
 
-    // Esc restores the raw keystrokes of the word being composed ("đấy" →
-    // "ddaays") and is consumed by that; with nothing to restore it is the
-    // app's Esc as usual (and a word boundary).
     if keycode == VK_ESC {
         let actions = state::restore_raw();
         if !actions.is_empty() && inject(proxy, &actions) {
@@ -286,13 +223,7 @@ unsafe extern "C" fn tap_callback(
         return event;
     }
 
-    // Enter and Tab commit the word (so macros expand) but always pass
-    // through — the app needs the key itself. CGEventTapPostEvent puts the
-    // expansion into the stream *before* the returned event, so the edit
-    // lands ahead of the Enter/Tab.
     if matches!(keycode, VK_RETURN | VK_KP_ENTER | VK_TAB) {
-        // Enter ends the line, so the next word opens a sentence; Tab commits
-        // a word without ending anything.
         let actions = if keycode == VK_TAB {
             state::commit_word()
         } else {
@@ -309,13 +240,6 @@ unsafe extern "C" fn tap_callback(
         None => return event,
     };
 
-    // Arrow keys, Home/End/Page Up/Down, and function keys report through
-    // `CGEventKeyboardGetUnicodeString` as control characters or codepoints in
-    // the Unicode private-use area (NSHomeFunctionKey, NSF1FunctionKey, …).
-    // On full-size keyboards these arrive *without* the Fn modifier flag (only
-    // laptop Fn-combos set it), so the shortcut-flag check above misses them.
-    // None of these are Vietnamese input — treat them as a composition
-    // boundary and pass through untouched instead of corrupting the buffer.
     if ch.is_control() || ('\u{F700}'..='\u{F8FF}').contains(&ch) {
         state::reset();
         return event;
@@ -323,27 +247,17 @@ unsafe extern "C" fn tap_callback(
 
     let actions = state::process_char(ch);
     if actions.is_empty() {
-        return event; // pass through
+        return event;
     }
 
     if inject(proxy, &actions) {
-        ptr::null_mut() // swallow the original keystroke
+        ptr::null_mut()
     } else {
-        // Injection unavailable: pass the raw keystroke through rather than
-        // swallowing it with no replacement — a plain letter beats a lost one.
         event
     }
 }
 
-/// Whether this keydown is the configured enable/disable shortcut.
-///
-/// Matched by *keycode* rather than the produced character: with Control held,
-/// `CGEventKeyboardGetUnicodeString` reports control characters, not letters.
-/// The modifier set must match exactly, so ⌃⇧V never also fires on ⌘⌃⇧V.
 fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
-    // While the settings window is recording a replacement, the combination
-    // being pressed is aimed at the recorder — acting on it would flip
-    // Vietnamese typing on every attempt.
     if state::shortcut_recording() {
         return false;
     }
@@ -362,10 +276,9 @@ fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
         && flags.contains(CGEventFlags::CGEventFlagShift) == sc.shift
 }
 
-/// ANSI-layout virtual keycode for a shortcut key. Layout-independent for
-/// letters/digits on the keyboards we can reasonably support without
-/// `UCKeyTranslate`; unknown keys disable the shortcut rather than guessing.
+#[rustfmt::skip]
 fn keycode_for(c: char) -> Option<u16> {
+    // ANSI-layout virtual keycodes.
     Some(match c {
         'a' => 0, 's' => 1, 'd' => 2, 'f' => 3, 'h' => 4, 'g' => 5, 'z' => 6, 'x' => 7,
         'c' => 8, 'v' => 9, 'b' => 11, 'q' => 12, 'w' => 13, 'e' => 14, 'r' => 15,
@@ -378,14 +291,9 @@ fn keycode_for(c: char) -> Option<u16> {
 }
 
 thread_local! {
-    /// pid → app name, cached because the tap sees every keystroke. All lookups
-    /// happen on the tap thread. A recycled pid could serve a stale name until
-    /// restart; accepted, since the alternative is a path lookup per key.
     static APP_NAMES: RefCell<HashMap<i64, String>> = RefCell::new(HashMap::new());
 }
 
-/// Human-readable name of the app that owns `pid` — the `.app` bundle name when
-/// there is one ("Safari"), else the executable name.
 fn app_name_for_pid(pid: i64) -> Option<String> {
     if pid <= 0 {
         return None;
@@ -408,12 +316,12 @@ fn pid_path(pid: i32) -> Option<String> {
     if len <= 0 {
         return None;
     }
-    std::str::from_utf8(&buf[..len as usize]).ok().map(str::to_string)
+    std::str::from_utf8(&buf[..len as usize])
+        .ok()
+        .map(str::to_string)
 }
 
 fn app_name_from_path(path: &str) -> Option<String> {
-    // "…/Safari.app/Contents/MacOS/Safari" → "Safari". The *first* .app wins so
-    // a helper nested inside another bundle reports the app the user knows.
     for component in path.split('/') {
         if let Some(name) = component.strip_suffix(".app") {
             if !name.is_empty() {
@@ -424,9 +332,6 @@ fn app_name_from_path(path: &str) -> Option<String> {
     path.rsplit('/').find(|s| !s.is_empty()).map(str::to_string)
 }
 
-/// Names of every `.app` bundle installed in the standard application
-/// folders, using the same display name convention as [`app_name_from_path`]
-/// ("Safari.app" → "Safari") so entries line up with the per-app settings.
 pub(super) fn installed_apps() -> Vec<String> {
     let mut roots = vec![
         PathBuf::from("/Applications"),
@@ -444,11 +349,10 @@ pub(super) fn installed_apps() -> Vec<String> {
     names
 }
 
-/// Push the name of every `.app` bundle under `dir`, descending `depth`
-/// levels into plain subfolders (e.g. /Applications/Utilities) but never into
-/// a bundle itself — helpers nested inside another app aren't user-facing.
 fn collect_apps(dir: &Path, depth: usize, out: &mut Vec<String>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
@@ -462,7 +366,6 @@ fn collect_apps(dir: &Path, depth: usize, out: &mut Vec<String>) {
     }
 }
 
-/// Read the Unicode character the key would have produced.
 unsafe fn read_char(event: CGEventRefRaw) -> Option<char> {
     let mut buf = [0u16; 4];
     let mut len: usize = 0;
@@ -470,45 +373,17 @@ unsafe fn read_char(event: CGEventRefRaw) -> Option<char> {
     if len == 0 {
         return None;
     }
-    String::from_utf16_lossy(&buf[..len.min(buf.len())]).chars().next()
+    String::from_utf16_lossy(&buf[..len.min(buf.len())])
+        .chars()
+        .next()
 }
 
-/// Synthesize the edit actions as `CGEvent`s, each tagged as synthetic, and
-/// post them at this tap's position via `CGEventTapPostEvent`.
-///
-/// Returns `false` when nothing was posted — the caller must then pass the
-/// original keystroke through instead of swallowing it, or the character is
-/// silently lost (the "sometimes the first letter of a word vanishes" bug).
-/// Every event is built before any is posted, so a mid-sequence creation
-/// failure falls back to the untouched keystroke rather than a half-applied
-/// edit.
-/// U+202F NARROW NO-BREAK SPACE — the sentinel OpenKey and XKey both use for
-/// the workaround below. It is invisible, and no app treats it as a word
-/// boundary the way a plain space would be.
 const AUTOCOMPLETE_SENTINEL: &str = "\u{202F}";
 
-/// Work around inline autocomplete eating the first injected Backspace.
-///
-/// Address bars and spreadsheet cells complete as you type and leave the
-/// suggestion *selected* after the caret. Our first Backspace deletes that
-/// selection rather than the character it meant to remove, so the replacement
-/// lands beside the original: typing "dd" gives "dđ" instead of "đ". Sending a
-/// throwaway character first makes the app commit and clear its suggestion,
-/// and one extra Backspace takes the sentinel away again.
-///
-/// Only worth doing when we are about to delete something — a plain insert has
-/// no Backspace to lose.
-///
-/// This is opt-in per app rather than always on, because it is not free.
-/// OpenKey enables it globally and its own issue tracker records the cost:
-/// Chrome on macOS holds its suggestion long enough that the sentinel is eaten
-/// too, and a sentinel that survives is visible corruption in the text.
 fn with_autocomplete_fix(actions: &[EditAction]) -> Vec<EditAction> {
     let Some(EditAction::Backspace(count)) = actions.first() else {
         return actions.to_vec();
     };
-    // The sentinel needs one more Backspace to clear it; if the count is
-    // already at the ceiling, leave the batch alone rather than truncating it.
     let Some(count) = count.checked_add(1) else {
         return actions.to_vec();
     };
@@ -549,10 +424,6 @@ fn inject(proxy: CGEventTapProxy, actions: &[EditAction]) -> bool {
                     events.push(up);
                 }
             }
-            // An empty insert is the engine saying "swallow the key, the
-            // screen is already right" — nothing to post. A keycode-0 keydown
-            // with no string could be read as the letter 'a' by apps that
-            // fall back to the keycode.
             EditAction::Insert(text) if text.is_empty() => {}
             EditAction::Insert(text) => {
                 let (Some(down), Some(up)) =
@@ -568,10 +439,6 @@ fn inject(proxy: CGEventTapProxy, actions: &[EditAction]) -> bool {
         }
     }
 
-    // "Slow typing" compatibility: a small pause between events for apps
-    // that drop rapid synthetic bursts. Only for apps the user listed, and
-    // short enough that even a long rewrite stays far under the event-tap
-    // watchdog (~8 events × 3 ms).
     let pause = state::slow_typing_here().then(|| std::time::Duration::from_millis(3));
     for ev in &events {
         unsafe { CGEventTapPostEvent(proxy, ev.as_ptr() as CGEventRefRaw) };
@@ -582,16 +449,12 @@ fn inject(proxy: CGEventTapProxy, actions: &[EditAction]) -> bool {
     true
 }
 
-/// A synthetic key event, tagged so the tap ignores it if it ever loops back.
 fn make_key(source: &CGEventSource, keycode: u16, down: bool) -> Option<CGEvent> {
     let ev = CGEvent::new_keyboard_event(source.clone(), keycode, down).ok()?;
     ev.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARKER);
     Some(ev)
 }
 
-/// Check whether the process is trusted for Accessibility. When `prompt` is
-/// true, macOS shows the "grant permission" dialog if it isn't; when false it
-/// only reports the current state (safe to poll every second).
 pub(super) fn request_accessibility_permission(prompt: bool) -> bool {
     unsafe {
         let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
@@ -611,8 +474,6 @@ mod tests {
 
     #[test]
     fn autocomplete_fix_prefixes_a_sentinel_and_deletes_it_again() {
-        // The sentinel is typed first, so the count has to grow by one to
-        // clear it along with the characters being replaced.
         let actions = vec![EditAction::Backspace(2), EditAction::Insert("đ".into())];
         assert_eq!(
             with_autocomplete_fix(&actions),
@@ -626,15 +487,16 @@ mod tests {
 
     #[test]
     fn autocomplete_fix_leaves_a_plain_insert_alone() {
-        // No Backspace means no suggestion can eat one — a sentinel here would
-        // just be an invisible character left in the text.
         let actions = vec![EditAction::Insert("a".into())];
         assert_eq!(with_autocomplete_fix(&actions), actions);
     }
 
     #[test]
     fn autocomplete_fix_declines_a_batch_at_the_backspace_ceiling() {
-        let actions = vec![EditAction::Backspace(u8::MAX), EditAction::Insert("x".into())];
+        let actions = vec![
+            EditAction::Backspace(u8::MAX),
+            EditAction::Insert("x".into()),
+        ];
         assert_eq!(with_autocomplete_fix(&actions), actions);
     }
 
@@ -642,8 +504,6 @@ mod tests {
     fn collects_app_bundles_one_folder_deep() {
         let root = std::env::temp_dir().join(format!("vnkey-apps-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        // Helpers nested inside a bundle and folders below the depth limit
-        // must both be skipped; loose files and dot-folders are ignored.
         std::fs::create_dir_all(root.join("Safari.app/Contents/Helper.app")).unwrap();
         std::fs::create_dir_all(root.join("Utilities/Terminal.app")).unwrap();
         std::fs::create_dir_all(root.join("Utilities/Deeper/Hidden.app")).unwrap();

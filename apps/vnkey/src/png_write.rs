@@ -1,14 +1,6 @@
-//! Minimal, dependency-free PNG encoder — just enough to write an 8-bit RGBA
-//! image. Used only to build the app-icon iconset at package time (see
-//! `tray::export_iconset`), so we skip an `image`/`png` crate dependency in
-//! favor of the simplest valid encoding: "stored" (uncompressed) DEFLATE
-//! blocks. Every PNG decoder must support them per RFC 1951, so this is
-//! portable despite being hand-rolled.
-
 use std::io;
 use std::path::Path;
 
-/// Write `rgba` (straight-alpha, `size`×`size`×4 bytes) as an 8-bit RGBA PNG.
 pub(crate) fn write_png(path: &Path, size: u32, rgba: &[u8]) -> io::Result<()> {
     assert_eq!(rgba.len(), size as usize * size as usize * 4);
 
@@ -41,7 +33,6 @@ fn write_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     out.extend_from_slice(&crc32(&out[start..]).to_be_bytes());
 }
 
-/// zlib-wrap `data` using only uncompressed ("stored") DEFLATE blocks.
 fn zlib_stored(data: &[u8]) -> Vec<u8> {
     let mut out = vec![0x78, 0x01]; // CMF/FLG for a valid, dictionary-less zlib stream
     let mut i = 0;
