@@ -356,6 +356,21 @@ pub fn shortcut_parts(shortcut: &str) -> Vec<String> {
     parts
 }
 
+/// The Windows virtual-key code a shortcut's key is delivered as.
+///
+/// Here rather than beside the hook that uses it because CI lints the Windows
+/// target but never runs its tests, so a table living in `platform::windows`
+/// would be compiled everywhere and checked nowhere.
+#[cfg(any(target_os = "windows", test))]
+pub fn windows_vk(key: char) -> Option<u16> {
+    Some(match key {
+        'a'..='z' => key.to_ascii_uppercase() as u16,
+        '0'..='9' => key as u16,
+        ' ' => 0x20,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,6 +684,38 @@ mod tests {
     fn an_unparseable_shortcut_is_shown_as_written() {
         assert_eq!(shortcut_parts("hyper+v"), ["hyper+v"]);
         assert_eq!(shortcut_parts("ctrl+alt+shift+v"), ["ctrl+alt+shift+v"]);
+    }
+
+    #[test]
+    fn a_shortcut_key_maps_to_its_windows_virtual_key() {
+        assert_eq!(windows_vk('v'), Some(0x56));
+        assert_eq!(windows_vk('a'), Some(0x41));
+        assert_eq!(windows_vk('z'), Some(0x5A));
+        assert_eq!(windows_vk('0'), Some(0x30));
+        assert_eq!(windows_vk('9'), Some(0x39));
+        assert_eq!(windows_vk(' '), Some(0x20));
+    }
+
+    /// The hook can only match a shortcut whose key it can name, so anything
+    /// `parse_shortcut` accepts has to have a virtual-key code.
+    #[test]
+    fn every_key_a_shortcut_may_hold_has_a_virtual_key() {
+        for key in ('a'..='z').chain('0'..='9').chain([' ']) {
+            let shortcut = match key {
+                ' ' => "ctrl+space".to_string(),
+                key => format!("ctrl+{key}"),
+            };
+            let parsed = parse_shortcut(&shortcut).map(|sc| sc.key);
+            assert_eq!(parsed, Some(key), "{shortcut} should parse");
+            assert!(windows_vk(key).is_some(), "{key} has no virtual-key code");
+        }
+    }
+
+    #[test]
+    fn a_key_no_shortcut_can_hold_has_no_virtual_key() {
+        assert_eq!(windows_vk('!'), None);
+        assert_eq!(windows_vk('ư'), None);
+        assert_eq!(windows_vk('A'), None);
     }
 
     #[test]
