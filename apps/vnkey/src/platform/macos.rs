@@ -522,6 +522,13 @@ fn make_key(source: &CGEventSource, keycode: u16, down: bool) -> Option<CGEvent>
     Some(ev)
 }
 
+#[allow(dead_code)]
+pub(super) fn open_accessibility_settings() {
+    crate::update::open_url(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    );
+}
+
 pub(super) fn request_accessibility_permission(prompt: bool) -> bool {
     unsafe {
         let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);

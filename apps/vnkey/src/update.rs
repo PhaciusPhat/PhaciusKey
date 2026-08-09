@@ -162,6 +162,93 @@ fn urlencode(s: &str) -> String {
     out
 }
 
+/// The one button an alert offers besides Done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum Action {
+    Accessibility,
+    Releases,
+    Retry,
+}
+
+impl Action {
+    #[allow(dead_code)]
+    pub fn label(self) -> &'static str {
+        match self {
+            Action::Accessibility => "Open Accessibility",
+            Action::Releases => "Download manually",
+            Action::Retry => "Try again",
+        }
+    }
+
+    /// The interface command the button sends, matching `ui::ipc::Cmd`.
+    #[allow(dead_code)]
+    pub fn cmd(self) -> &'static str {
+        match self {
+            Action::Accessibility => "open_accessibility",
+            Action::Releases => "open_releases",
+            Action::Retry => "check_updates",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct Notice {
+    pub title: String,
+    pub body: String,
+    /// Rendered in the amber box the panel uses for the secure-input warning.
+    pub warn: Option<String>,
+    pub action: Option<Action>,
+}
+
+#[allow(dead_code)]
+pub fn notice_updated(from: &str, to: &str, needs_permission: bool) -> Notice {
+    Notice {
+        title: format!("Updated to {to}"),
+        body: format!("PhaciusKey has been updated from {from} to {to} and restarted."),
+        warn: needs_permission.then(|| {
+            "macOS needs you to allow Accessibility once more, because this update changed \
+             the app's code-signing identity. Typing stays off until then."
+                .to_string()
+        }),
+        action: needs_permission.then_some(Action::Accessibility),
+    }
+}
+
+#[allow(dead_code)]
+pub fn notice_install_failed(version: &str, error: &str) -> Notice {
+    Notice {
+        title: "Update failed".to_string(),
+        body: format!(
+            "PhaciusKey could not install version {version} automatically.\n\n{error}\n\n\
+             The current version keeps working."
+        ),
+        warn: None,
+        action: Some(Action::Releases),
+    }
+}
+
+#[allow(dead_code)]
+pub fn notice_up_to_date() -> Notice {
+    Notice {
+        title: "Up to date".to_string(),
+        body: format!("PhaciusKey {CURRENT} is the newest version."),
+        warn: None,
+        action: None,
+    }
+}
+
+#[allow(dead_code)]
+pub fn notice_check_failed(error: &str) -> Notice {
+    Notice {
+        title: "Couldn't check for updates".to_string(),
+        body: format!("PhaciusKey could not reach GitHub.\n\n{error}"),
+        warn: None,
+        action: Some(Action::Retry),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +286,40 @@ mod tests {
         assert!(is_newer("1.0.0", "0.9.9"));
         assert!(!is_newer("0.0.3", "0.0.3"));
         assert!(!is_newer("0.0.2", "0.0.3"));
+    }
+
+    #[test]
+    fn a_completed_update_offers_accessibility_only_when_it_was_lost() {
+        let kept = notice_updated("0.0.24", "0.0.25", false);
+        assert!(kept.body.contains("0.0.24"));
+        assert!(kept.body.contains("0.0.25"));
+        assert_eq!(kept.action, None);
+        assert_eq!(kept.warn, None);
+
+        let lost = notice_updated("0.0.24", "0.0.25", true);
+        assert_eq!(lost.action, Some(Action::Accessibility));
+        assert!(lost.warn.is_some());
+    }
+
+    #[test]
+    fn a_failed_install_offers_a_manual_download() {
+        let notice = notice_install_failed("0.0.25", "curl exited with 22");
+        assert!(notice.body.contains("0.0.25"));
+        assert!(notice.body.contains("curl exited with 22"));
+        assert_eq!(notice.action, Some(Action::Releases));
+    }
+
+    #[test]
+    fn being_up_to_date_needs_no_action() {
+        let notice = notice_up_to_date();
+        assert!(notice.body.contains(CURRENT));
+        assert_eq!(notice.action, None);
+    }
+
+    #[test]
+    fn a_failed_check_offers_a_retry() {
+        let notice = notice_check_failed("no network");
+        assert!(notice.body.contains("no network"));
+        assert_eq!(notice.action, Some(Action::Retry));
     }
 }
