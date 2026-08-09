@@ -522,7 +522,6 @@ fn make_key(source: &CGEventSource, keycode: u16, down: bool) -> Option<CGEvent>
     Some(ev)
 }
 
-#[allow(dead_code)]
 pub(super) fn open_accessibility_settings() {
     crate::update::open_url(
         "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",

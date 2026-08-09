@@ -4,7 +4,6 @@ mod panel;
 mod payload;
 mod settings;
 
-#[allow(unused_imports)]
 pub use alert::Alert;
 pub use ipc::{apply_ipc, WindowAction};
 pub use panel::Panel;
@@ -19,7 +18,6 @@ const THEME: &str = include_str!("assets/theme.css");
 pub enum Surface {
     Panel,
     Settings,
-    #[allow(dead_code)]
     Alert,
 }
 

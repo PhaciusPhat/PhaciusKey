@@ -11,26 +11,19 @@ use super::Surface;
 use crate::update::Notice;
 use crate::UserEvent;
 
-#[allow(dead_code)]
 const CSS: &str = include_str!("assets/alert.css");
-#[allow(dead_code)]
 const BODY: &str = include_str!("assets/alert.html");
-#[allow(dead_code)]
 const SCRIPT: &str = include_str!("assets/alert.js");
 
-#[allow(dead_code)]
 const WIDTH: f64 = 380.0;
-#[allow(dead_code)]
 const INITIAL_HEIGHT: f64 = 160.0;
 
-#[allow(dead_code)]
 fn centre_origin(size: PhysicalSize<u32>, work_area: Rect) -> PhysicalPosition<i32> {
     let x = work_area.x + (work_area.width - f64::from(size.width)) / 2.0;
     let y = work_area.y + (work_area.height - f64::from(size.height)) / 2.0;
     PhysicalPosition::new(x.round() as i32, y.round() as i32)
 }
 
-#[allow(dead_code)]
 fn notice_json(notice: &Notice) -> String {
     json!({
         "title": notice.title,
@@ -41,14 +34,12 @@ fn notice_json(notice: &Notice) -> String {
     .to_string()
 }
 
-#[allow(dead_code)]
 pub struct Alert {
     window: Window,
     webview: WebView,
     height: Cell<f64>,
 }
 
-#[allow(dead_code)]
 impl Alert {
     pub fn new(
         target: &EventLoopWindowTarget<UserEvent>,
@@ -84,6 +75,7 @@ impl Alert {
         })
     }
 
+    #[allow(dead_code)]
     pub fn window_id(&self) -> WindowId {
         self.window.id()
     }

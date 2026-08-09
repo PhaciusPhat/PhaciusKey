@@ -198,7 +198,6 @@ pub struct Notice {
     pub action: Option<Action>,
 }
 
-#[allow(dead_code)]
 pub fn notice_updated(from: &str, to: &str, needs_permission: bool) -> Notice {
     Notice {
         title: format!("Updated to {to}"),
@@ -212,7 +211,6 @@ pub fn notice_updated(from: &str, to: &str, needs_permission: bool) -> Notice {
     }
 }
 
-#[allow(dead_code)]
 pub fn notice_install_failed(version: &str, error: &str) -> Notice {
     Notice {
         title: "Update failed".to_string(),
@@ -225,7 +223,6 @@ pub fn notice_install_failed(version: &str, error: &str) -> Notice {
     }
 }
 
-#[allow(dead_code)]
 pub fn notice_up_to_date() -> Notice {
     Notice {
         title: "Up to date".to_string(),
@@ -235,7 +232,6 @@ pub fn notice_up_to_date() -> Notice {
     }
 }
 
-#[allow(dead_code)]
 pub fn notice_check_failed(error: &str) -> Notice {
     Notice {
         title: "Couldn't check for updates".to_string(),
