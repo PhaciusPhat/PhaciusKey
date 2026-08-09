@@ -1728,10 +1728,22 @@ From the spec's Testing section, on macOS:
 
 Record the outcome. If any fails, stop and fix before releasing.
 
-- [ ] **Step 2: Bump the version**
+- [ ] **Step 2: Bump the version — in BOTH files**
 
-In `apps/vnkey/Cargo.toml`, `version = "0.0.24"` becomes `version = "0.0.25"`.
-Run `cargo check -p vnkey` so `Cargo.lock` updates.
+`.github/workflows/release.yml` refuses to publish unless the tag matches
+`apps/vnkey/Info.plist`'s `CFBundleShortVersionString` **and** `apps/vnkey/Cargo.toml`'s
+`version`. Bumping only one fails the release after the tag is already pushed.
+
+- `apps/vnkey/Cargo.toml`: `version = "0.0.24"` → `"0.0.25"`
+- `apps/vnkey/Info.plist`: `CFBundleShortVersionString` `0.0.24` → `0.0.25`
+  (leave `CFBundleVersion` at `18`; it has not moved since 0.0.18)
+
+Then `cargo check -p vnkey` so `Cargo.lock` updates. Verify before tagging:
+
+```sh
+grep '^version' apps/vnkey/Cargo.toml
+/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' apps/vnkey/Info.plist
+```
 
 - [ ] **Step 3: Mark the spec implemented**
 
