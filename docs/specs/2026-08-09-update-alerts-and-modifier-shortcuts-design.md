@@ -1,10 +1,14 @@
-# Themed update alerts, and modifier-only toggle shortcuts
+# Themed update alerts, modifier-only shortcuts, and an honest panel switch
 
 **Date:** 2026-08-09 · **Status:** designed, not yet implemented.
 
 ## Problem
 
-Two unrelated complaints, both about surfaces the 0.0.24 redesign did not reach.
+Three unrelated complaints, all about surfaces the 0.0.24 redesign did not
+reach. Neither of the last two is the defect it was reported as: one names a
+real gap by the wrong measurement, the other describes behaviour that is
+already correct. Both are recorded as reported and then as found, so the next
+reader does not go hunting for a bug that was never there.
 
 1. **The update popups do not look like the application.** Four moments in the
    update lifecycle go through `osascript display dialog`: a system modal with
@@ -19,7 +23,12 @@ Two unrelated complaints, both about surfaces the 0.0.24 redesign did not reach.
    letter, digit or space, so `"ctrl+shift"` is rejected — pinned by a test at
    `config.rs:420`.
 
-The second point reverses a decision recorded in
+3. **The panel's Vietnamese switch looks like it only covers the current
+   application.** It does not, but the line printed directly beneath it names
+   whatever application you are standing in, which is the one position that
+   implies scope.
+
+Point 2 reverses a decision recorded in
 `2026-08-09-settings-ui-redesign-design.md`, which stated: *"One or two
 modifiers plus exactly one letter/digit/space. Modifier-only combinations are
 not accepted."* That decision stands corrected. The min-2 / max-3 key rule it
@@ -28,12 +37,21 @@ own now satisfy it.
 
 ### What is not the problem
 
-The reported symptom was "the shortcut still demands three keys". It does not:
-`MODIFIERS` is `1..=2` (`config.rs:201`), `parse_shortcut("ctrl+v")` is pinned
-as valid (`config.rs:428`), the recorder hint already reads *"Hold one or two
+**The shortcut does not demand three keys.** `MODIFIERS` is `1..=2`
+(`config.rs:201`), `parse_shortcut("ctrl+v")` is pinned as valid
+(`config.rs:428`), the recorder hint already reads *"Hold one or two
 modifiers"*, and both hooks match modifier-for-modifier. Two-key combinations
 such as `⌃V` and `⌥Z` work today. The actual gap is modifier-only, which is a
 different shape, not a different count.
+
+**The panel switch is not per-application.** `vietnamese_on(app)` is
+`!excluded_for(app) && self.enabled` (`config.rs:149`); the switch writes
+`enabled`, one machine-wide flag, and `toggle_vietnamese` (`state.rs:123`)
+flips exactly that. Per-application behaviour lives entirely in the exclusion
+list, which is what the reporter expected and what already exists. Only the
+panel's own copy says otherwise, and only the panel's: the settings window
+already labels the same switch *"The master switch, everywhere"*
+(`settings.html:21`).
 
 ### A hot-path defect this work would otherwise worsen
 
@@ -58,6 +76,8 @@ is fixed here because this work depends on that path being cheap.
 | How it is recorded | The same gesture that fires it — hold, then let go. |
 | Parsed shortcut on the hot path | Cached in an `AtomicU32`, written on settings change. |
 | Testing the alerts | A hidden `--show-alert <kind>` flag, following `--export-iconset`. |
+| The panel's switch subtitle | Describes global scope only. It never names the current application. |
+| Standing in an excluded application | Said in a warning row, not in the switch's subtitle. |
 
 ---
 
@@ -208,7 +228,41 @@ gets visible update alerts for the first time.
 
 ---
 
-## The activation risk, and how it is handled
+## Part C — The panel's Vietnamese switch
+
+The switch is machine-wide and stays machine-wide. What changes is the line
+underneath it, at `panel.js:63`, which today resolves to `"On in Safari"` or
+`"Off in Safari"` and so reads as a Safari switch.
+
+The subtitle now only ever describes global scope:
+
+| Excluded applications | Subtitle |
+|---|---|
+| none | `Everywhere` |
+| one | `Everywhere except 1 app` |
+| more | `Everywhere except <n> apps` |
+
+Standing inside an excluded application is worth saying, but not there. It
+moves to a warning row using the `.warn` box the panel already carries for the
+secure-input notice, reading `<app> is one of them`, hidden otherwise:
+
+```
+⚠ Secure input on — typing paused        (existing, unchanged)
+
+PhaciusKey                                                   v0.0.25
+Vietnamese typing                                     ⌃ ⇧ V   ●───
+Everywhere except 3 apps
+⚠ Safari is one of them
+```
+
+No Rust change is required: `excluded_apps`, `excluded_here` and `current_app`
+are already in the payload (`payload.rs:48–52`). The panel simply stops reading
+`vietnamese_here`, which stays in the payload for the settings window — one
+payload serves every surface, and a surface ignoring a field it does not use is
+the existing arrangement.
+
+`panel.html` gains one element for the warning row. The panel measures its own
+height, so the row appearing and disappearing needs no sizing work.
 
 The app runs as an `Accessory` on macOS (`main.rs:72`) — no Dock icon, never the
 active application. Two of the four alerts appear unprompted, one of them
@@ -288,6 +342,13 @@ By hand, on macOS:
 - `⌃⇧` toggles typing; `⌃⇧C` in a browser opens dev tools and does not toggle;
   `⌃⇧` held with `⌥` added does not toggle.
 - Recording `⌃⇧` by holding and releasing, and `⌃⇧V` by holding and pressing.
+- The panel row in all three states: no exclusions, exclusions set while
+  standing outside them, and standing inside one. Part C is entirely page code,
+  and the repository has no JavaScript test harness, so this is the only check
+  it gets — worth knowing rather than discovering later.
+- Flipping the switch while standing in an excluded application: the switch
+  moves, the warning row stays, and typing stays off there. This is the case
+  the old copy made incoherent.
 
 Windows remains unverified on real hardware, as with 0.0.24, but is written and
 kept lint-clean.
@@ -300,4 +361,7 @@ kept lint-clean.
 - Any modifier-only shortcut for anything other than the toggle.
 - What the toggle does inside an excluded application. A modifier-only
   shortcut reaches `state::toggle_vietnamese()` by the same route a keyed one
-  does, so that behaviour is whatever it is today, unchanged.
+  does, so that behaviour is whatever it is today, unchanged. Part C changes
+  how that state is described, never what it is.
+- Making the panel switch per-application. It is machine-wide by design, and
+  the exclusion list is the per-application mechanism.
