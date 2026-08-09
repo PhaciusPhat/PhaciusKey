@@ -68,7 +68,7 @@
   var lastParts = [];
   var lastHint = shortcutHint.textContent;
   var MODS = ["⌃", "⌥", "⇧", "⌘"]; // control, option, shift, command
-  var ASK = "Hold modifiers, then press a key — or just let go.";
+  var ASK = "Hold modifiers, then press a key — or just let go. Esc cancels.";
   var TOO_MANY = "That’s too many — three keys at most.";
   var NEED_TWO = "Use two modifiers, or add a key.";
   var peak = 0;
@@ -147,14 +147,17 @@
 
     var usable = /^Key[A-Z]$/.test(e.code) || /^Digit[0-9]$/.test(e.code) || e.code === "Space";
     if (!usable) {
+      usedKey = true;
       setHint("That key can’t be used — pick a letter, a digit or space.");
       return;
     }
     if (heldCount(e) === 0) {
+      usedKey = true;
       setHint("Add a modifier — a bare key would fire while you type.");
       return;
     }
     if (heldCount(e) > 2) {
+      usedKey = true;
       setHint(TOO_MANY);
       return;
     }

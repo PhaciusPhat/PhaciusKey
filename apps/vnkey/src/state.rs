@@ -22,7 +22,6 @@ pub fn set_shortcut_recording(on: bool) {
     RECORDING_SHORTCUT.store(on, Ordering::Relaxed);
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn shortcut_recording() -> bool {
     RECORDING_SHORTCUT.load(Ordering::Relaxed)
 }

@@ -18,9 +18,9 @@ const SCRIPT: &str = include_str!("assets/alert.js");
 const WIDTH: f64 = 380.0;
 const INITIAL_HEIGHT: f64 = 160.0;
 
-fn centre_origin(size: PhysicalSize<u32>, work_area: Rect) -> PhysicalPosition<i32> {
-    let x = work_area.x + (work_area.width - f64::from(size.width)) / 2.0;
-    let y = work_area.y + (work_area.height - f64::from(size.height)) / 2.0;
+fn centre_origin(size: PhysicalSize<u32>, monitor_area: Rect) -> PhysicalPosition<i32> {
+    let x = monitor_area.x + (monitor_area.width - f64::from(size.width)) / 2.0;
+    let y = monitor_area.y + (monitor_area.height - f64::from(size.height)) / 2.0;
     PhysicalPosition::new(x.round() as i32, y.round() as i32)
 }
 
@@ -107,7 +107,7 @@ impl Alert {
         );
         let position = monitor.position();
         let monitor_size = monitor.size();
-        let work_area = Rect {
+        let monitor_area = Rect {
             x: f64::from(position.x),
             y: f64::from(position.y),
             width: f64::from(monitor_size.width),
@@ -116,7 +116,7 @@ impl Alert {
 
         self.window.set_inner_size(size);
         self.window
-            .set_outer_position(centre_origin(size, work_area));
+            .set_outer_position(centre_origin(size, monitor_area));
     }
 }
 

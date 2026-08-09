@@ -59,7 +59,7 @@ fn main() {
             std::process::exit(2);
         };
         forced_alert = Some(match kind.as_str() {
-            "updated-needs-permission" => update::notice_updated("0.0.24", update::CURRENT, true),
+            "updated-needs-permission" => update::notice_updated("0.0.1", update::CURRENT, true),
             "install-failed" => update::notice_install_failed(update::CURRENT, "a sample failure"),
             "up-to-date" => update::notice_up_to_date(),
             "check-failed" => update::notice_check_failed("a sample failure"),

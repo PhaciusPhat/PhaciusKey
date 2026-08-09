@@ -108,18 +108,20 @@ A modifier-only shortcut is a prefix of every `⌃⇧X` in every application, so
 cannot fire when the modifiers go down. It fires when they are released, and
 only if the gesture was clean.
 
-This lives in `config::ChordWatch`, a pure state machine holding one `bool`, so
-the rule is tested without a keyboard. The arms are evaluated in the order
-written:
+This lives in `config::ChordWatch`, a pure state machine holding two flags —
+`armed` and `poisoned` — so the rule is tested without a keyboard. `poisoned`
+outlives `armed` deliberately: releasing a third modifier returns the held set
+to the target, and without a separate flag the gesture would re-arm mid-flight.
+The arms are evaluated in the order written:
 
 ```
 modifiers(held, target):
-  held == target   → arm,      no fire
-  held is empty    → fire if armed, then disarm
-  held ⊄ target    → disarm            (a third modifier joined)
-  held ⊂ target    → unchanged         (mid-press, or mid-release)
+  held is empty    → fire if armed, then clear both flags
+  held ⊄ target    → armed = false, poisoned = true   (a third modifier joined)
+  held == target   → arm, unless poisoned              no fire
+  held ⊂ target    → unchanged                         (mid-press, or mid-release)
 
-interrupted():     → disarm            (any other key, or a mouse click)
+interrupted(held): → armed = false, poisoned = (held != 0)
 ```
 
 Because the empty case is tested first, the final arm only ever sees a
@@ -127,6 +129,12 @@ non-empty proper subset.
 
 The subset case is what makes releasing one modifier before the other work:
 `⌃⇧` → release ⇧ → `{⌃}` is a subset, still armed → release ⌃ → empty, fires.
+
+`interrupted(held)` only poisons while a modifier is still held. A gesture can
+only be in flight while `held != 0`; typing a plain letter with no modifiers
+down produces no modifier event at all, so nothing would ever clear a poison
+set unconditionally, and the *next* `⌃⇧` — not the one in progress — would be
+the one silently swallowed.
 
 Both hooks own a `ChordWatch` and feed it. The branching exists once.
 
@@ -137,13 +145,27 @@ in the `match etype` dispatch (`macos.rs:151`). Flags events are **always**
 passed through unchanged — swallowing one would leave every other application
 believing a modifier is still held.
 
-`ET_KEY_DOWN` and the two mouse arms call `interrupted()`.
+`ET_KEY_DOWN` and the two mouse arms call `interrupted(held)`, where `held` is
+the modifier mask read from the event that interrupted the gesture.
 
 ### Windows
 
 The low-level hook already receives `VK_CONTROL` and `VK_SHIFT` down and up, so
 `ChordWatch` is fed from the existing key-up branch (`windows.rs:88`) and the
 key-down path. Modifier keys are never swallowed, for the same reason.
+
+### A platform difference: the mouse
+
+The rule above says "any other key, or a mouse click" spoils a gesture in
+progress. That is true on macOS, where the event tap also receives
+`ET_LEFT_MOUSE_DOWN` and `ET_RIGHT_MOUSE_DOWN`. It is not true on Windows:
+`WH_KEYBOARD_LL` sees only keyboard events, and there is no mouse hook. Holding
+`⌃⇧`, clicking, and releasing the modifiers toggles typing on Windows but not
+on macOS.
+
+This is accepted rather than fixed. A second global `WH_MOUSE_LL` hook would
+cost every mouse event on the machine against `LowLevelHooksTimeout` to spoil a
+gesture that is rare to begin with.
 
 ### The hot path
 
@@ -218,8 +240,10 @@ The body ranges from one line to a paragraph plus a warning box, so the page
 measures itself and reports height through the existing `panel_height`
 mechanism. `WindowAction::Resize` currently lands on the panel unconditionally
 (`main.rs:183`); it is routed by `Surface` instead. A pure
-`centre_origin(size, work_area)` centres the window on the monitor under the
-pointer, testable the way `panel_origin` already is.
+`centre_origin(size, monitor_area)` centres the window on `primary_monitor()`,
+testable the way `panel_origin` already is. Not the monitor under the pointer:
+an alert firing seconds after `relaunch_and_exit`, or from the daily background
+update check, has no pointer gesture to take a monitor from.
 
 ### What is deleted
 
@@ -314,9 +338,8 @@ harness. The page assigns the field and does no arithmetic.
 
 `excluded_here` and `current_app` are already in the payload
 (`payload.rs:48–52`) and carry the warning row. The panel stops reading
-`vietnamese_here`, which stays in the payload for the settings window — one
-payload serves every surface, and a surface ignoring a field it does not use is
-the existing arrangement.
+`vietnamese_here`, and the field is dropped from the payload entirely — nothing
+else read it either.
 
 `panel.html` gains one element for the warning row. The panel measures its own
 height, so the row appearing and disappearing needs no sizing work.
