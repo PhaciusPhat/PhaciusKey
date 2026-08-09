@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 pub struct Outcome {
@@ -182,6 +183,7 @@ fn show_dialog(body: &str) {
     eprintln!("[vnkey] {body}");
 }
 
+#[cfg(target_os = "macos")]
 fn run(program: &str, args: &[&str]) -> Result<(), String> {
     let output = Command::new(program)
         .args(args)

@@ -6,6 +6,7 @@ pub fn releases_url() -> String {
     format!("https://github.com/{REPO}/releases/latest")
 }
 
+#[cfg(target_os = "macos")]
 pub fn dmg_url(version: &str) -> String {
     format!("https://github.com/{REPO}/releases/download/v{version}/PhaciusKey-{version}.dmg")
 }

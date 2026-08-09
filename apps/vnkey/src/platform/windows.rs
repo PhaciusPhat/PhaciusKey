@@ -1,7 +1,7 @@
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, LPARAM, LRESULT, WPARAM};
@@ -318,36 +318,39 @@ fn queue_paste(actions: &[EditAction], key: PasteKey) -> bool {
         return true;
     }
 
-    let sender = paste_worker();
-    let queued = sender
-        .lock()
-        .map(|tx| tx.send(PasteJob { steps, key }).is_ok())
-        .unwrap_or(false);
+    let queued = paste_worker().is_some_and(|tx| tx.send(PasteJob { steps, key }).is_ok());
     if !queued {
         eprintln!("[vnkey] paste worker unavailable; dropped one batch of Vietnamese text");
     }
     queued
 }
 
-fn paste_worker() -> &'static Mutex<Sender<PasteJob>> {
-    static WORKER: OnceLock<Mutex<Sender<PasteJob>>> = OnceLock::new();
-    WORKER.get_or_init(|| {
-        let (tx, rx) = mpsc::channel::<PasteJob>();
-        std::thread::Builder::new()
-            .name("vnkey-paste".into())
-            .spawn(move || {
-                for job in rx {
-                    for step in &job.steps {
-                        match step {
-                            PasteStep::Backspace(count) => send_backspaces(*count),
-                            PasteStep::Text(text) => paste_text(text, job.key),
+fn paste_worker() -> Option<&'static Sender<PasteJob>> {
+    static WORKER: OnceLock<Option<Sender<PasteJob>>> = OnceLock::new();
+    WORKER
+        .get_or_init(|| {
+            let (tx, rx) = mpsc::channel::<PasteJob>();
+            let spawned = std::thread::Builder::new()
+                .name("vnkey-paste".into())
+                .spawn(move || {
+                    for job in rx {
+                        for step in &job.steps {
+                            match step {
+                                PasteStep::Backspace(count) => send_backspaces(*count),
+                                PasteStep::Text(text) => paste_text(text, job.key),
+                            }
                         }
                     }
+                });
+            match spawned {
+                Ok(_) => Some(tx),
+                Err(e) => {
+                    eprintln!("[vnkey] could not start the paste worker: {e}");
+                    None
                 }
-            })
-            .expect("spawn vnkey-paste thread");
-        Mutex::new(tx)
-    })
+            }
+        })
+        .as_ref()
 }
 
 fn send_backspaces(count: u8) {
