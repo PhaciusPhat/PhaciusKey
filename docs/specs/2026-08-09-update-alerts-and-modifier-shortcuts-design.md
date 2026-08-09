@@ -1,6 +1,9 @@
 # Themed update alerts, modifier-only shortcuts, and an honest panel switch
 
-**Date:** 2026-08-09 · **Status:** designed, not yet implemented.
+**Date:** 2026-08-09 · **Status:** implemented in 0.0.25. Verified by unit tests and
+by launching every alert; the on-screen checks in Testing — how the alerts render,
+whether they come to the front over a full-screen application, and `⌃⇧` toggling in
+a real application — have **not** been performed.
 
 ## Problem
 

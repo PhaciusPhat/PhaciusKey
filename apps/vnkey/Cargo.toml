@@ -1,6 +1,6 @@
 [package]
 name = "vnkey"
-version = "0.0.24"
+version = "0.0.25"
 edition = "2021"
 description = "Cross-platform Vietnamese input method (Telex/VNI) — Rust shell over vnkey-core"
 license = "MIT"
