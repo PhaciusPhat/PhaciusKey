@@ -82,22 +82,16 @@ fn stroke_d() {
 
 #[test]
 fn combined_horn_and_tone() {
-    // "duong7" → "dương", then "1" → "dướng"... wait, no tone yet, then "71" → ư + sắc
     assert_eq!(displayed_after("duong71"), "dướng");
 }
 
 #[test]
 fn viet() {
-    // vi + e6 + t + 5 → "việt" (circumflex e, nặng tone). Note the tone digit is
-    // pressed once: pressing '5' twice now cancels it and types the digit.
     assert_eq!(displayed_after("vie6t5"), "việt");
 }
 
 #[test]
 fn tone_reverses_after_space_and_backspace() {
-    // The reported bug: "đoán" → space → Backspace → '1' typed "đoán1"
-    // instead of reversing the tone. Backspace over the space must resume
-    // composing the word, so the repeated tone key cancels sắc: "đoan1".
     let mut e = engine();
     for ch in "d9oan1".chars() {
         e.process(Keystroke::char(ch));

@@ -1,8 +1,3 @@
-//! Regression corpus for the v0.0.12 fixes: modifier keys arriving *after* the
-//! word ("loaji", "ddoori", "vietej"), the ưo → ươ auto-correction, and
-//! Backspace keeping the composition alive so deleting and re-typing inside a
-//! word recomposes it instead of breaking it ("rượu" → "rượ" → "rượu").
-
 use vnkey_core::{Config, EditAction, Engine, InputMethod, Keystroke, TonePlacementMode};
 
 fn engine(method: InputMethod) -> Engine {
@@ -31,11 +26,6 @@ fn vni(seq: &str) -> String {
     typed(seq, InputMethod::Vni)
 }
 
-// ── Late modifier keys ────────────────────────────────────────────────────────
-
-/// A tone key typed before the closing vowel of the rime, or a doubling vowel
-/// typed after the coda, still applies to the word: "loaji" → "loại", not raw
-/// keystrokes handed back as foreign.
 #[test]
 fn late_modifier_keys_apply_to_the_word() {
     for (seq, want) in [
@@ -50,10 +40,6 @@ fn late_modifier_keys_apply_to_the_word() {
     }
 }
 
-// ── ưo → ươ auto-correction ──────────────────────────────────────────────────
-
-/// "ưo" never occurs in Vietnamese orthography — a plain 'o' after 'ư' is
-/// always "ươ", so the engine corrects it without waiting for a horn key.
 #[test]
 fn uo_after_horn_is_corrected_to_uo_horn() {
     assert_eq!(telex("ruwou"), "rươu");
@@ -62,10 +48,6 @@ fn uo_after_horn_is_corrected_to_uo_horn() {
     assert_eq!(vni("ru7ou5"), "rượu");
 }
 
-// ── English still survives the relaxed rules ─────────────────────────────────
-
-/// The rules were only *relaxed* for closing vowels; English words that used to
-/// come back verbatim must still come back verbatim.
 #[test]
 fn english_words_still_restored_verbatim() {
     for word in ["user", "reset", "there", "case", "photo", "note", "date"] {
@@ -73,11 +55,6 @@ fn english_words_still_restored_verbatim() {
     }
 }
 
-// ── Backspace keeps composing ────────────────────────────────────────────────
-
-/// Drives an engine the way the platform layer does, applying `EditAction`s to
-/// a screen string. An empty action list means the key passes through natively:
-/// the char is typed as-is, or the native Backspace removes one char.
 struct Screen {
     engine: Engine,
     text: String,
@@ -85,7 +62,10 @@ struct Screen {
 
 impl Screen {
     fn new(method: InputMethod) -> Self {
-        Self { engine: engine(method), text: String::new() }
+        Self {
+            engine: engine(method),
+            text: String::new(),
+        }
     }
 
     fn apply(&mut self, actions: Vec<EditAction>) {
@@ -130,8 +110,6 @@ impl Screen {
     }
 }
 
-/// The reported bug: "rượu" → Backspace → re-type must give "rượu" again, not
-/// "rưoự" (the old engine forgot the word and composed "uj" from scratch).
 #[test]
 fn backspace_then_retype_recomposes_the_word() {
     Screen::new(InputMethod::Telex)
@@ -143,8 +121,6 @@ fn backspace_then_retype_recomposes_the_word() {
         .expect("rượu");
 }
 
-/// Deleting deeper and re-typing the tail also auto-corrects: "rư" + "ou" must
-/// become "rươu" (ưo → ươ), then the tone key finishes "rượu".
 #[test]
 fn backspace_twice_then_retype_autocorrects() {
     Screen::new(InputMethod::Telex)
@@ -181,8 +157,6 @@ fn backspace_then_retype_keeps_the_diacritic() {
         .expect("việt");
 }
 
-/// A foreign (passthrough) word must survive delete + re-type untouched rather
-/// than being re-composed into diacritics.
 #[test]
 fn backspace_in_a_foreign_word_stays_verbatim() {
     Screen::new(InputMethod::Telex)

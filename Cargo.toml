@@ -4,3 +4,21 @@ members = [
     "apps/vnkey",
 ]
 resolver = "2"
+
+# Lints live here rather than on the command line, so a local `cargo clippy`
+# enforces exactly what CI does. Priority matters: the blanket `all` is set
+# highest so the named lints below can override it.
+[workspace.lints.rust]
+future_incompatible = "warn"
+nonstandard_style = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = 10 }
+# Cloning in the keyboard hook is the mistake most worth catching by machine:
+# the callback runs on every keystroke and is watchdogged on both platforms.
+redundant_clone = { level = "deny", priority = 9 }
+needless_collect = { level = "deny", priority = 9 }
+large_enum_variant = { level = "deny", priority = 9 }
+# `unwrap`/`expect` belong in tests, which set their own level below.
+unwrap_used = { level = "deny", priority = 9 }
+expect_used = { level = "deny", priority = 9 }

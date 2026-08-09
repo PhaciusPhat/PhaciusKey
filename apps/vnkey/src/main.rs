@@ -1,35 +1,8 @@
-//! vnkey — a cross-platform Vietnamese input method.
-//!
-//! Architecture: a shared, OS-independent engine (`vnkey-core`) driven by a thin
-//! per-OS keyboard hook (`platform`), with a cross-platform tray menu (`tray`)
-//! and TOML settings (`config`). The event loop (`tao`) runs the app as a
-//! menu-bar / tray accessory with no Dock icon or window.
-//!
-//! ## Permissions & updates
-//! The keyboard hook needs macOS Accessibility permission. Rather than force a
-//! quit/relaunch after the user grants it, the loop **polls once a second and
-//! installs the hook the moment permission appears**.
-//!
-//! An update check runs in the background — once at launch, then daily for as
-//! long as the process lives (a menu-bar agent is rarely quit, so a launch-only
-//! check would fire once per login, not once a day). A *failed* check retries
-//! after 15 minutes instead of sitting out the rest of the day: the launch check
-//! races Wi-Fi/VPN coming up at login, and long sessions hit transient failures
-//! (network flaps, GitHub's per-IP rate limit) too. When a newer release exists
-//! and `auto_update` is on (the default), the app downloads it, replaces its own
-//! bundle, relaunches, and tells the user on the way back up — see `installer`.
-//! Outside a `.app` (a `cargo run` build) it only surfaces the menu item.
-//!
-//! macOS ties the Accessibility grant to the code-signing identity. Published
-//! releases are all signed with the shared `phaciuskey-release` certificate
-//! (see CONTRIBUTING.md → Releasing), so the grant survives the swap. Ad-hoc
-//! dev builds each carry a fresh identity — after updating one of those, the
-//! relaunch dialog says Accessibility must be allowed again.
-//! `installer::install` reports the live TCC state rather than assuming either
-//! way.
-
-// No console window on Windows release builds.
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 mod autostart;
 mod config;
@@ -52,49 +25,35 @@ use crate::platform::{Hook, KeyboardHook};
 use crate::settings_window::SettingsWindow;
 use crate::tray::Tray;
 
-/// Events posted to the main loop from background work.
 enum UserEvent {
-    /// A newer release is available (version string, no leading `v`).
     UpdateAvailable(String),
-    /// A newer release was downloaded and installed; relaunch into it.
     UpdateInstalled(std::path::PathBuf),
-    /// An automatic update failed (version, reason).
     UpdateFailed(String, String),
-    /// A user-requested "check now" finished (newer version / up to date / error).
     UpdateCheckDone(Result<Option<String>, String>),
-    /// Settings or the focused app changed off the main thread (toggle
-    /// shortcut, app switch) — re-sync the tray.
     StateChanged,
-    /// A JSON command posted by the settings window's page (see
-    /// `settings_window::apply_ipc`).
     Ipc(String),
 }
 
 fn main() {
-    // Hidden packaging-only path: `vnkey --export-iconset <dir>` dumps the app
-    // icon's PNGs for `scripts/package-app.sh` to hand to `iconutil`. Never hit
-    // during normal use.
     let mut args = std::env::args().skip(1);
     if args.next().as_deref() == Some("--export-iconset") {
-        let dir = args.next().expect("usage: vnkey --export-iconset <dir>");
-        tray::export_iconset(std::path::Path::new(&dir)).expect("failed to export iconset");
+        let Some(dir) = args.next() else {
+            eprintln!("usage: vnkey --export-iconset <dir>");
+            std::process::exit(2);
+        };
+        if let Err(e) = tray::export_iconset(std::path::Path::new(&dir)) {
+            eprintln!("[vnkey] failed to export iconset: {e}");
+            std::process::exit(1);
+        }
         return;
     }
 
-    // Load persisted settings and initialize the shared engine state.
     let mut settings = Settings::load();
 
-    // Older versions installed a LaunchAgent plist by hand; drop it and hand
-    // the user's request to macOS instead, so the login item is registered the
-    // way the system expects. Re-registering is only done here, on migration —
-    // asserting it every launch means asking the system to register something
-    // already registered, which it answers with an error.
     if autostart::migrate_legacy_launch_agent() && settings.start_at_login {
         autostart::apply(true);
     }
 
-    // macOS owns this state: the user can switch the login item off in System
-    // Settings, and the stored copy has to follow rather than fight it.
     let registered = autostart::effective(settings.start_at_login);
     if registered != settings.start_at_login {
         settings.start_at_login = registered;
@@ -105,7 +64,6 @@ fn main() {
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
-    // Menu-bar accessory: no Dock icon, no window.
     #[cfg(target_os = "macos")]
     {
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
@@ -122,9 +80,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
     let proxy = event_loop.create_proxy();
     let menu_channel = MenuEvent::receiver();
 
-    // Wake the loop when a background thread (the keyboard hook) changes state,
-    // so the tray reflects a shortcut-toggle or app switch immediately. The
-    // proxy goes behind a Mutex only to make the callback Sync.
     let tray_sync = std::sync::Mutex::new(event_loop.create_proxy());
     state::set_on_change(Box::new(move || {
         if let Ok(proxy) = tray_sync.lock() {
@@ -132,11 +87,9 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
         }
     }));
 
-    // Built after the loop starts (StartCause::Init), per tray-icon guidance.
     let mut tray: Option<Tray> = None;
     let mut hook: Option<Hook> = None;
     let mut permission_requested = false;
-    // Created on the first "Settings…" click, then hidden/shown on demand.
     let mut settings_win: Option<SettingsWindow> = None;
 
     event_loop.run(move |event, target, control_flow| {
@@ -150,13 +103,8 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 announce_completed_update();
                 spawn_update_check(proxy.clone());
                 spawn_secure_input_watch(proxy.clone());
-                // Dev smoke flag: open the settings window immediately, so the
-                // webview path can be exercised without clicking the tray.
                 if std::env::args().any(|a| a == "--settings-window") {
                     match SettingsWindow::new(target, proxy.clone()) {
-                        // show(): an accessory app isn't active when the window
-                        // is built, so without an explicit focus it can appear
-                        // behind the frontmost app.
                         Ok(win) => {
                             win.show();
                             settings_win = Some(win);
@@ -164,8 +112,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                         Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
                     }
                 }
-                // Prompt for Accessibility once; the poll below installs the hook
-                // the moment it is granted — no relaunch needed.
                 platform::request_permission();
                 permission_requested = true;
             }
@@ -173,8 +119,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 if let Some(tray) = &tray {
                     tray.set_update_available(&version);
                 }
-                // Only self-update from a real bundle, and only if the user has
-                // not turned it off.
                 if state::settings().auto_update && installer::app_bundle().is_some() {
                     if let Some(tray) = &tray {
                         tray.set_update_installing(&version);
@@ -183,13 +127,10 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 }
             }
             Event::UserEvent(UserEvent::UpdateInstalled(app)) => {
-                // The relaunched instance shows the dialog: by then the new
-                // version is running and its real permission state is known.
                 installer::relaunch_and_exit(&app);
             }
             Event::UserEvent(UserEvent::UpdateFailed(version, reason)) => {
                 eprintln!("[vnkey] automatic update to {version} failed: {reason}");
-                // Re-arm the menu item so the user can click to retry.
                 if let Some(tray) = &tray {
                     tray.set_update_available(&version);
                 }
@@ -199,8 +140,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 if let Some(tray) = &tray {
                     match result {
                         Ok(Some(version)) => {
-                            // The user asked for an update, not a notification:
-                            // go straight into the install.
                             tray.set_update_available(&version);
                             start_install(tray, &proxy, version);
                         }
@@ -222,8 +161,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 if let Some(tray) = &tray {
                     tray.refresh(&state::settings(), state::current_app().as_deref());
                 }
-                // The settings window mirrors changes made anywhere else (the
-                // tray, the toggle shortcut, an app switch).
                 if let Some(win) = &settings_win {
                     win.push_state();
                 }
@@ -242,7 +179,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 window_id,
                 ..
             } => {
-                // The app lives in the menu bar; closing settings hides it.
                 if let Some(win) = &settings_win {
                     if win.window_id() == window_id {
                         win.hide();
@@ -252,7 +188,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             _ => {}
         }
 
-        // Auto-retry: install the hook as soon as permission is present.
         if hook.is_none() && permission_requested && platform::permission_granted() {
             match Hook::install() {
                 Ok(h) => {
@@ -263,16 +198,12 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             }
         }
 
-        // Drain menu clicks.
         while let Ok(menu_event) = menu_channel.try_recv() {
             if let Some(tray) = &tray {
                 if menu_event.id == tray.settings.id() {
                     match &settings_win {
                         Some(win) => win.show(),
                         None => match SettingsWindow::new(target, proxy.clone()) {
-                            // show() here too: an accessory app isn't active,
-                            // so a fresh window can open behind the frontmost
-                            // app without an explicit focus.
                             Ok(win) => {
                                 win.show();
                                 settings_win = Some(win);
@@ -289,8 +220,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             }
         }
 
-        // Keep polling every second until the hook is installed; then idle.
-        // (Never override a pending exit.)
         if !matches!(*control_flow, ControlFlow::ExitWithCode(_)) {
             *control_flow = if hook.is_none() {
                 ControlFlow::WaitUntil(Instant::now() + Duration::from_secs(1))
@@ -301,10 +230,6 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
     })
 }
 
-/// Watch the system's Secure Event Input flag and re-sync the tray when it
-/// flips, so the "Vietnamese paused" warning appears and disappears with the
-/// password field that caused it. Polling is the only public interface; every
-/// 2 s is far below anything noticeable.
 fn spawn_secure_input_watch(proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
         let mut was = platform::secure_input_active();
@@ -319,8 +244,6 @@ fn spawn_secure_input_watch(proxy: EventLoopProxy<UserEvent>) {
     });
 }
 
-/// Check now, then once a day for the life of the process; a failed check is
-/// retried after 15 minutes (see the module docs for why both matter).
 fn spawn_update_check(proxy: EventLoopProxy<UserEvent>) {
     const DAY: Duration = Duration::from_secs(24 * 60 * 60);
     const RETRY: Duration = Duration::from_secs(15 * 60);
@@ -340,11 +263,6 @@ fn spawn_update_check(proxy: EventLoopProxy<UserEvent>) {
     });
 }
 
-/// Install `version` in the background, then ask the loop to relaunch.
-///
-/// The daily check re-announces an update whose install failed the day before;
-/// the guard makes a second announcement arriving while an install is still in
-/// flight a no-op rather than a concurrent download of the same DMG.
 fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
     use std::sync::atomic::{AtomicBool, Ordering};
     static INSTALLING: AtomicBool = AtomicBool::new(false);
@@ -352,7 +270,6 @@ fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
         return;
     }
     std::thread::spawn(move || {
-        // Re-arm on every exit path; on success the process relaunches anyway.
         struct Rearm;
         impl Drop for Rearm {
             fn drop(&mut self) {
@@ -363,9 +280,6 @@ fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
         eprintln!("[vnkey] installing update {version}…");
         match installer::install(&version) {
             Ok(outcome) => {
-                // `last_seen_version` already holds this build's version (written at
-                // startup), which is exactly what the relaunched build compares
-                // against to discover it was updated.
                 if let Some(app) = installer::app_bundle() {
                     let _ = proxy.send_event(UserEvent::UpdateInstalled(app));
                 }
@@ -381,9 +295,6 @@ fn spawn_update_install(proxy: EventLoopProxy<UserEvent>, version: String) {
     });
 }
 
-/// Kick off an immediate install of `version`, reflecting it in the menu item.
-/// Outside a `.app` bundle self-update is impossible, so fall back to opening
-/// the releases page for a manual download.
 fn start_install(tray: &Tray, proxy: &EventLoopProxy<UserEvent>, version: String) {
     if installer::app_bundle().is_some() {
         tray.set_update_installing(&version);
@@ -393,8 +304,6 @@ fn start_install(tray: &Tray, proxy: &EventLoopProxy<UserEvent>, version: String
     }
 }
 
-/// If the version on disk changed since the last run, we were self-updated —
-/// tell the user, and note whether they must re-grant Accessibility.
 fn announce_completed_update() {
     let previous = state::settings().last_seen_version;
     if let Some(prev) = previous.as_deref() {
@@ -403,7 +312,6 @@ fn announce_completed_update() {
             installer::announce_update(prev, update::CURRENT, needs_permission);
         }
     }
-    // Always record the running version, including on a first launch.
     if previous.as_deref() != Some(update::CURRENT) {
         state::update(|s| s.last_seen_version = Some(update::CURRENT.to_string()));
     }
@@ -422,9 +330,6 @@ fn handle_menu_event(
         return;
     }
     if id == tray.update.id() {
-        // Update *now*: install the known release directly, or check first and
-        // install whatever the check finds. Opening the releases page (the old
-        // behavior) is now only the fallback for builds that can't self-update.
         match tray.available_version() {
             Some(version) => start_install(tray, proxy, version),
             None => {
@@ -445,9 +350,9 @@ fn handle_menu_event(
     let updated = if id == tray.toggle.id() {
         state::toggle_vietnamese()
     } else if id == tray.app_toggle.id() {
-        // Flip the focused app: its remembered state in per-app mode, its
-        // presence in the exclusion list otherwise.
-        let Some(app) = state::current_app() else { return };
+        let Some(app) = state::current_app() else {
+            return;
+        };
         state::update(|s| {
             if s.per_app_mode {
                 let now = s.vietnamese_on(Some(&app));
@@ -474,19 +379,19 @@ fn handle_menu_event(
         return;
     };
 
-    // Reflect the change back into the menu checkmarks and tray glyph.
     tray.refresh(&updated, state::current_app().as_deref());
 }
 
-/// Open `config.toml` in the user's text editor, creating it first so the
-/// editor has something to open on a fresh install.
 pub(crate) fn open_config_file() {
     let path = Settings::config_path();
     if !path.exists() {
         state::settings().save();
     }
     #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg("-t").arg(&path).spawn();
+    let _ = std::process::Command::new("open")
+        .arg("-t")
+        .arg(&path)
+        .spawn();
     #[cfg(not(target_os = "macos"))]
     update::open_url(&path.to_string_lossy());
 }

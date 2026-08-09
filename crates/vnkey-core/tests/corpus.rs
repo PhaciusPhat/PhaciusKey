@@ -1,11 +1,3 @@
-//! End-to-end corpus: type a key sequence through the engine and check what
-//! lands on screen.
-//!
-//! These are the cases that were broken before the composition rewrite — the
-//! tone-placement families (gi/qu onsets, classic vs modern, ươ clusters) and
-//! the auto-restore path that used to mangle English words ("jira" → "jỉa",
-//! "student" → "ent").
-
 use vnkey_core::{Config, Engine, InputMethod, Keystroke, TonePlacementMode};
 
 fn typed(seq: &str, method: InputMethod, placement: TonePlacementMode) -> String {
@@ -54,7 +46,6 @@ fn telex_diacritics_and_tones() {
 
 #[test]
 fn telex_horn_clusters() {
-    // "uo" takes both horns at once; 'w' also applies to an earlier cluster.
     for (seq, want) in [("thuowngr", "thưởng"), ("nguoiwf", "người"), ("uw", "ư")] {
         assert_eq!(telex(seq), want, "telex {seq:?}");
     }
@@ -71,12 +62,8 @@ fn gi_and_qu_are_onsets_not_nuclei() {
 
 #[test]
 fn g_plus_i_plus_coda_words_compose() {
-    // "gìn" (giữ gìn) is onset g + nucleus i + coda n. The greedy onset parser
-    // used to read "gi" as the onset, leaving the impossible rime "n", so the
-    // word went to passthrough and displayed raw "ginf".
     assert_eq!(telex("ginf"), "gìn");
     assert_eq!(vni("gin2"), "gìn");
-    // The "gi"-onset words must keep working alongside.
     assert_eq!(telex("gias"), "giá");
     assert_eq!(telex("giuwx"), "giữ");
 }
@@ -87,7 +74,6 @@ fn modern_and_classic_placement_differ() {
     assert_eq!(telex_classic("hoaf"), "hoà");
     assert_eq!(telex("thuys"), "thúy");
     assert_eq!(telex_classic("thuys"), "thuý");
-    // Closed syllables agree.
     assert_eq!(telex("toans"), "toán");
     assert_eq!(telex_classic("toans"), "toán");
 }
@@ -106,11 +92,6 @@ fn vni_diacritics_and_tones() {
     }
 }
 
-/// The reported bug: typing an English word must give back that word.
-///
-/// Each of these used to be mangled — the engine gave up on the first
-/// impossible letter but then *re-composed* the remainder, so "jira" came out
-/// as "jỉa" with the 'r' eaten as a hỏi tone.
 #[test]
 fn english_words_are_returned_verbatim() {
     for word in [
@@ -122,33 +103,34 @@ fn english_words_are_returned_verbatim() {
     }
 }
 
-/// Words that are simultaneously valid Vietnamese syllables cannot be told
-/// apart from Vietnamese without a dictionary, so they still convert. Pinned
-/// here so the limitation is visible rather than surprising.
 #[test]
 fn known_ambiguous_english_words_still_convert() {
-    for (word, becomes) in [("rust", "rút"), ("cost", "cót"), ("last", "lát"), ("test", "tét")] {
-        assert_eq!(telex(word), becomes, "{word:?} is ambiguous with Vietnamese");
+    for (word, becomes) in [
+        ("rust", "rút"),
+        ("cost", "cót"),
+        ("last", "lát"),
+        ("test", "tét"),
+    ] {
+        assert_eq!(
+            telex(word),
+            becomes,
+            "{word:?} is ambiguous with Vietnamese"
+        );
     }
 }
 
 #[test]
 fn tone_removal_key_with_nothing_to_remove_is_literal() {
-    // 'z' removes a tone; with no tone to remove it is the letter z. It used to
-    // be consumed unconditionally, so "zoo" showed "ô" and "size" lost its 'z'.
     for word in ["z", "zoo", "zalo", "size", "haz"] {
         assert_eq!(telex(word), word, "expected {word:?} to survive untouched");
     }
-    // ...but it still removes a real tone,
     assert_eq!(telex("hasz"), "ha");
-    // and VNI's '0' behaves the same way.
     assert_eq!(vni("ha0"), "ha0");
     assert_eq!(vni("ha10"), "ha");
 }
 
 #[test]
 fn passthrough_resets_at_a_word_boundary() {
-    // A foreign word must not poison the next word.
     let mut engine = Engine::new(Config {
         method: InputMethod::Telex,
         placement: TonePlacementMode::Modern,
@@ -172,9 +154,6 @@ fn case_is_preserved() {
     assert_eq!(telex("Jira"), "Jira");
 }
 
-/// Applies edit actions to a string, the way the platform layer applies them to
-/// the focused text field. This is what the *user* sees, as distinct from the
-/// engine's internal record in `current_displayed()`.
 fn screen(seq: &str, backspaces_at_end: usize) -> String {
     let mut engine = Engine::new(Config {
         method: InputMethod::Telex,
@@ -201,7 +180,7 @@ fn screen(seq: &str, backspaces_at_end: usize) -> String {
     for ch in seq.chars() {
         let actions = engine.process(Keystroke::char(ch));
         if actions.is_empty() {
-            out.push(ch); // engine passed the key through
+            out.push(ch);
         } else {
             apply(actions, &mut out);
         }
@@ -209,7 +188,7 @@ fn screen(seq: &str, backspaces_at_end: usize) -> String {
     for _ in 0..backspaces_at_end {
         let actions = engine.backspace();
         if actions.is_empty() {
-            out.pop(); // native Backspace
+            out.pop();
         } else {
             apply(actions, &mut out);
         }
@@ -219,8 +198,6 @@ fn screen(seq: &str, backspaces_at_end: usize) -> String {
 
 #[test]
 fn backspace_deletes_a_letter_not_the_tone_mark() {
-    // The reported bug: Backspace on "đoán" gave "đoan" (it undid the tone
-    // keystroke). It must delete the letter the user can see.
     assert_eq!(screen("ddoans", 0), "đoán");
     assert_eq!(screen("ddoans", 1), "đoá");
     assert_eq!(screen("ddoans", 2), "đo");
@@ -233,7 +210,6 @@ fn backspace_on_a_composed_vowel_removes_the_whole_character() {
     assert_eq!(screen("tieengs", 0), "tiếng");
     assert_eq!(screen("tieengs", 1), "tiến");
     assert_eq!(screen("tieengs", 2), "tiế");
-    // "á" is one character even though it took two keystrokes.
     assert_eq!(screen("as", 1), "");
 }
 
@@ -273,17 +249,12 @@ fn screen_vni(seq: &str) -> String {
     out
 }
 
-/// Pressing a diacritic or tone key again undoes it and types the key, so the
-/// word stops being Vietnamese.
 #[test]
 fn repeating_a_key_undoes_it_and_types_it() {
-    // VNI: "đoán" then '1' → "đoan1".
     assert_eq!(screen_vni("d9oan1"), "đoán");
     assert_eq!(screen_vni("d9oan11"), "đoan1");
-    // Telex: "â" then 'a' → "aa".
     assert_eq!(screen("aa", 0), "â");
     assert_eq!(screen("aaa", 0), "aa");
-    // The rest of the family.
     assert_eq!(screen("eee", 0), "ee");
     assert_eq!(screen("ooo", 0), "oo");
     assert_eq!(screen("ddd", 0), "dd");
@@ -293,7 +264,6 @@ fn repeating_a_key_undoes_it_and_types_it() {
     assert_eq!(screen_vni("d99"), "d9");
 }
 
-/// A different key still just changes the mark — only a repeat undoes it.
 #[test]
 fn a_different_key_changes_rather_than_undoes() {
     assert_eq!(screen("asf", 0), "à");

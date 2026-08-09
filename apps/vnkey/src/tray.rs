@@ -1,9 +1,3 @@
-//! Cross-platform menu-bar / system-tray control surface.
-//!
-//! Replaces the Swift `MenuBarController` (NSStatusItem) with the `tray-icon` +
-//! `muda` crates, which render a native `NSStatusItem` on macOS and a
-//! `Shell_NotifyIcon` tray on Windows from the same code.
-
 use std::cell::RefCell;
 use std::io;
 use std::path::Path;
@@ -16,11 +10,8 @@ use crate::config::{parse_shortcut, Method, Placement, Settings, Shortcut};
 use crate::png_write;
 use crate::update;
 
-/// The tray icon plus the menu items whose state we update after each change.
 pub struct Tray {
     tray: TrayIcon,
-    /// Disabled line under the header showing the focused app and what a
-    /// keystroke would do there right now.
     status: MenuItem,
     pub toggle: CheckMenuItem,
     pub app_toggle: CheckMenuItem,
@@ -36,26 +27,18 @@ pub struct Tray {
     pub update: MenuItem,
     pub report: MenuItem,
     pub quit: MenuItem,
-    /// Newest known release, once a check has found one. `RefCell`: the tray
-    /// lives on the main thread only (the menu items aren't `Send` anyway).
     available: RefCell<Option<String>>,
 }
 
 impl Tray {
-    /// Build the tray icon and menu, reflecting the current settings.
     pub fn new(settings: &Settings) -> Result<Self, String> {
         let err = |e: tray_icon::menu::Error| e.to_string();
 
         let header = MenuItem::new(format!("PhaciusKey  v{}", update::CURRENT), false, None);
         let status = MenuItem::new("Type anywhere to begin", false, None);
 
-        // The accelerator is a *hint*: the global toggle actually fires from the
-        // keyboard hook (an accessory app's menu key-equivalents only work while
-        // its menu is open). Unparseable shortcut string → no hint, no shortcut.
         let accel = parse_shortcut(&settings.toggle_shortcut).and_then(accelerator_for);
         let toggle = CheckMenuItem::new("Vietnamese typing", true, settings.enabled, accel);
-        // Text and enabled-state follow the focused app; until the first
-        // keystroke reveals one, there is nothing to toggle.
         let app_toggle = CheckMenuItem::new("Enable in current app", false, true, None);
         let per_app =
             CheckMenuItem::new("Remember on/off per app", true, settings.per_app_mode, None);
@@ -80,22 +63,39 @@ impl Tray {
         let tone_menu = Submenu::new(tone_title(settings), true);
         tone_menu.append_items(&[&modern, &classic]).map_err(err)?;
 
-        let auto_restore =
-            CheckMenuItem::new("Auto-restore English words", true, settings.auto_restore, None);
+        let auto_restore = CheckMenuItem::new(
+            "Auto-restore English words",
+            true,
+            settings.auto_restore,
+            None,
+        );
 
-        // Everything else (login item, updates, per-app list, config file)
-        // lives in the settings window, keeping the menu about typing.
         let settings_item = MenuItem::new("Settings…", true, None);
 
-        // A glanceable cheat sheet beats sending people to the README mid-word.
         let report = MenuItem::new("Report an issue…", true, None);
         let help_menu = Submenu::new("Help", true);
         help_menu
             .append_items(&[
-                &MenuItem::new("Telex:  aa â · ee ê · oo ô · ow ơ · uw ư · aw ă · dd đ", false, None),
-                &MenuItem::new("Telex tones:  s sắc · f huyền · r hỏi · x ngã · j nặng · z xoá", false, None),
-                &MenuItem::new("VNI:  6 â ê ô · 7 ơ ư · 8 ă · 9 đ · 1–5 tones · 0 xoá", false, None),
-                &MenuItem::new("Esc:  restore the word exactly as you typed it", false, None),
+                &MenuItem::new(
+                    "Telex:  aa â · ee ê · oo ô · ow ơ · uw ư · aw ă · dd đ",
+                    false,
+                    None,
+                ),
+                &MenuItem::new(
+                    "Telex tones:  s sắc · f huyền · r hỏi · x ngã · j nặng · z xoá",
+                    false,
+                    None,
+                ),
+                &MenuItem::new(
+                    "VNI:  6 â ê ô · 7 ơ ư · 8 ă · 9 đ · 1–5 tones · 0 xoá",
+                    false,
+                    None,
+                ),
+                &MenuItem::new(
+                    "Esc:  restore the word exactly as you typed it",
+                    false,
+                    None,
+                ),
                 &PredefinedMenuItem::separator(),
                 &report,
             ])
@@ -129,7 +129,7 @@ impl Tray {
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_icon(status_icon(settings.enabled))
+            .with_icon(status_icon(settings.enabled).ok_or("failed to render the tray icon")?)
             .with_tooltip("PhaciusKey — Vietnamese input")
             .build()
             .map_err(|e| e.to_string())?;
@@ -155,51 +155,34 @@ impl Tray {
         })
     }
 
-    /// Highlight the "Check for updates" item when a newer version is available
-    /// and remember it, so a click can install that version immediately instead
-    /// of just opening the releases page.
     pub fn set_update_available(&self, version: &str) {
         *self.available.borrow_mut() = Some(version.to_string());
         self.update.set_text(format!("⬇ Update to v{version} now"));
         self.update.set_enabled(true);
     }
 
-    /// The release a click on the update item would install, when one is known.
     pub fn available_version(&self) -> Option<String> {
         self.available.borrow().clone()
     }
 
-    /// A manual check is in flight — freeze the item so a second click can't
-    /// start a second one.
     pub fn set_update_checking(&self) {
         self.update.set_text("Checking for updates…");
         self.update.set_enabled(false);
     }
 
-    /// A download+install is in flight. On success the app relaunches; on
-    /// failure `set_update_available` re-arms the item for a retry.
     pub fn set_update_installing(&self, version: &str) {
         self.update.set_text(format!("Installing v{version}…"));
         self.update.set_enabled(false);
     }
 
-    /// Back to the resting state (up to date, or a check failed).
     pub fn set_update_idle(&self) {
         self.update.set_text("Check for updates…");
         self.update.set_enabled(true);
     }
 
-    /// Push the current settings into the menu's checkmarks, dynamic labels and
-    /// the tray glyph. `current_app` is the app receiving keystrokes, when the
-    /// hook knows it.
     pub fn refresh(&self, settings: &Settings, current_app: Option<&str>) {
-        // What a keystroke would do *right now*: global switch, per-app memory
-        // and the exclusion list all considered.
         let effective = settings.vietnamese_on(current_app);
 
-        // In per-app mode the main toggle acts on the focused app, so its
-        // checkmark mirrors the effective state; otherwise it is the global
-        // switch. (With no app focused the two coincide.)
         self.toggle.set_checked(if settings.per_app_mode {
             effective
         } else {
@@ -207,9 +190,6 @@ impl Tray {
         });
         self.per_app.set_checked(settings.per_app_mode);
 
-        // Secure Event Input (a focused password field, some terminals) blinds
-        // every event tap — typing silently runs raw. Say so, or the user is
-        // left wondering why Vietnamese "randomly" stopped.
         let status = if crate::platform::secure_input_active() {
             "⚠ Secure input on — Vietnamese paused (password field?)".to_string()
         } else {
@@ -222,14 +202,14 @@ impl Tray {
             }
         };
         self.status.set_text(&status);
-        let _ = self.tray.set_tooltip(Some(format!("PhaciusKey — {status}")));
+        let _ = self
+            .tray
+            .set_tooltip(Some(format!("PhaciusKey — {status}")));
 
         match current_app {
             Some(app) => {
                 self.app_toggle.set_text(format!("Enable in {app}"));
                 self.app_toggle.set_enabled(true);
-                // In per-app mode this is a synonym for the main toggle, so it
-                // shows the effective state; otherwise it is the exclusion list.
                 self.app_toggle.set_checked(if settings.per_app_mode {
                     effective
                 } else {
@@ -243,8 +223,6 @@ impl Tray {
             }
         }
 
-        // Keep the accelerator *hint* in sync with a shortcut edited in the
-        // settings window (the real shortcut lives in the keyboard hook).
         let _ = self
             .toggle
             .set_accelerator(parse_shortcut(&settings.toggle_shortcut).and_then(accelerator_for));
@@ -253,17 +231,16 @@ impl Tray {
         self.tone_menu.set_text(tone_title(settings));
         self.telex.set_checked(settings.method == Method::Telex);
         self.vni.set_checked(settings.method == Method::Vni);
-        self.modern.set_checked(settings.placement == Placement::Modern);
-        self.classic.set_checked(settings.placement == Placement::Classic);
+        self.modern
+            .set_checked(settings.placement == Placement::Modern);
+        self.classic
+            .set_checked(settings.placement == Placement::Classic);
         self.auto_restore.set_checked(settings.auto_restore);
 
-        // The glyph shows what a keystroke would do right now, so a per-app
-        // off state turns it amber even while the master toggle is on.
-        let _ = self.tray.set_icon(Some(status_icon(effective)));
+        let _ = self.tray.set_icon(status_icon(effective));
     }
 }
 
-/// Submenu title carrying its current value, readable without opening it.
 fn method_title(settings: &Settings) -> String {
     format!(
         "Input method  ·  {}",
@@ -284,7 +261,7 @@ fn tone_title(settings: &Settings) -> String {
     )
 }
 
-/// The menu-item accelerator hint matching a parsed [`Shortcut`].
+#[rustfmt::skip]
 fn accelerator_for(sc: Shortcut) -> Option<Accelerator> {
     let mut mods = Modifiers::empty();
     if sc.ctrl {
@@ -316,53 +293,49 @@ fn accelerator_for(sc: Shortcut) -> Option<Accelerator> {
     Some(Accelerator::new(Some(mods), code))
 }
 
-// ── Icon rendering ─────────────────────────────────────────────────────────────
-
-/// Render the menu-bar glyph: a bare letter on a transparent background —
-/// **V** (green) when Vietnamese typing is on, **E** (red) when off.
-/// Drawn at 4× and box-downsampled for crisp, anti-aliased edges.
-fn status_icon(enabled: bool) -> Icon {
+fn status_icon(enabled: bool) -> Option<Icon> {
     let rgba = render_rgba(36, enabled);
-    Icon::from_rgba(rgba, 36, 36).expect("valid rgba icon")
+    Icon::from_rgba(rgba, 36, 36).ok()
 }
 
 type Rgb = (f32, f32, f32);
 
-/// Draw the letter to a straight-alpha RGBA buffer of `size`×`size` pixels.
-/// Shared by the small tray glyph and the large app icon.
 pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
-    const SS: usize = 4; // supersample factor
+    const SS: usize = 4;
     let big = size * SS;
     let n = big * big;
     let big_f = big as f32;
 
     let color: Rgb = if enabled {
-        (52.0, 199.0, 89.0) // green — Vietnamese
+        (52.0, 199.0, 89.0)
     } else {
-        (255.0, 59.0, 48.0) // red — English
+        (255.0, 59.0, 48.0)
     };
 
-    // Letter coverage (1 on the strokes).
     let mut cov = vec![0f32; n];
-    let hw = big_f * 0.075; // stroke half-width
+    let hw = big_f * 0.075;
     let (ty0, ty1) = (big_f * 0.14, big_f * 0.86);
     let lw = big_f * 0.56;
     let cx = big_f * 0.5;
     let lx = cx - lw * 0.5;
     if enabled {
-        // V: two diagonals meeting at the bottom center.
         stroke(&mut cov, big, lx, ty0, cx, ty1, hw);
         stroke(&mut cov, big, cx, ty1, lx + lw, ty0, hw);
     } else {
-        // E: left post + top, middle, bottom bars.
         stroke(&mut cov, big, lx, ty0, lx, ty1, hw);
         stroke(&mut cov, big, lx, ty0, lx + lw, ty0, hw);
-        stroke(&mut cov, big, lx, (ty0 + ty1) * 0.5, lx + lw * 0.86, (ty0 + ty1) * 0.5, hw);
+        stroke(
+            &mut cov,
+            big,
+            lx,
+            (ty0 + ty1) * 0.5,
+            lx + lw * 0.86,
+            (ty0 + ty1) * 0.5,
+            hw,
+        );
         stroke(&mut cov, big, lx, ty1, lx + lw, ty1, hw);
     }
 
-    // Box-downsample the coverage into the alpha channel; the color is flat,
-    // so anti-aliasing is purely alpha and there is no edge fringing.
     let mut out = vec![0u8; size * size * 4];
     let samples = (SS * SS) as f32;
     for y in 0..size {
@@ -384,8 +357,6 @@ pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
     out
 }
 
-/// Standard macOS iconset filenames and the pixel size each must be rendered
-/// at (the `@2x` entries are the same logical size at double resolution).
 const ICONSET_SIZES: &[(&str, u32)] = &[
     ("icon_16x16.png", 16),
     ("icon_16x16@2x.png", 32),
@@ -399,10 +370,6 @@ const ICONSET_SIZES: &[(&str, u32)] = &[
     ("icon_512x512@2x.png", 1024),
 ];
 
-/// Render the app icon (the "enabled" jade glyph, since the Finder/Dock
-/// icon has no on/off state) at every size macOS's `.iconset` format expects,
-/// writing PNGs into `dir`. Only used by `scripts/package-app.sh` via the
-/// hidden `--export-iconset` flag — never invoked during normal app use.
 pub(crate) fn export_iconset(dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     for (name, size) in ICONSET_SIZES {
@@ -412,7 +379,6 @@ pub(crate) fn export_iconset(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Mark a thick line segment (rounded caps) into a coverage buffer.
 fn stroke(cov: &mut [f32], stride: usize, ax: f32, ay: f32, bx: f32, by: f32, half: f32) {
     let min_x = (ax.min(bx) - half).floor().max(0.0) as usize;
     let max_x = ((ax.max(bx) + half).ceil() as usize).min(stride - 1);
@@ -440,4 +406,3 @@ fn dist_sq_to_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f
     let (ex, ey) = (px - cx, py - cy);
     ex * ex + ey * ey
 }
-

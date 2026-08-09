@@ -1,5 +1,5 @@
-use crate::types::{Config, Tone};
 use super::{InputMethodProcessor, MethodResult};
+use crate::types::{Config, Tone};
 
 pub struct VniMethod;
 
@@ -13,21 +13,10 @@ impl InputMethodProcessor for VniMethod {
 }
 
 /// Process a raw VNI keystroke sequence.
-///
-/// VNI rules:
-///   1 → sắc, 2 → huyền, 3 → hỏi, 4 → ngã, 5 → nặng, 0 → remove tone
-///   6 → circumflex on preceding vowel (a→â, e→ê, o→ô)
-///   7 → horn on preceding vowel (o→ơ, u→ư)
-///   8 → breve on preceding vowel (a→ă)
-///   9 → đ (only replaces 'd' at onset)
 pub fn process_vni(raw: &str) -> MethodResult {
     let mut syllable = String::new();
-    // Uppercase flag per `syllable` character; digit keys push `false` and the
-    // in-place diacritic replacements are 1:1, so it stays in step.
     let mut mask: Vec<bool> = Vec::new();
     let mut tone = Tone::Flat;
-    // Set when a digit undid its own tone/diacritic, which makes the word literal
-    // text: "đoán" then '1' is "đoan1", not "đoán" with the digit swallowed.
     let mut cancelled = false;
 
     for ch in raw.chars() {
@@ -42,9 +31,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
         };
 
         if let Some(new_tone) = tone_digit {
-            // A tone digit needs a vowel to carry the mark, and '0' (remove
-            // tone) additionally needs a tone to remove — with nothing to undo
-            // it is the digit 0, mirroring Telex's 'z'.
             let acts = if new_tone == Tone::Flat {
                 tone != Tone::Flat
             } else {
@@ -54,7 +40,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
                 syllable.push(ch);
                 mask.push(false);
             } else if tone == new_tone && new_tone != Tone::Flat {
-                // Same digit twice: undo the tone and type the digit.
                 tone = Tone::Flat;
                 cancelled = true;
                 syllable.push(ch);
@@ -66,7 +51,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
         }
 
         match ch {
-            // Each diacritic digit first tries to undo itself, then to apply.
             '6' => {
                 if undo_diacritic(&mut syllable, &['â', 'ê', 'ô']) {
                     cancelled = true;
@@ -117,8 +101,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
 
     let literal = cancelled.then(|| syllable.clone());
     MethodResult {
-        // "ưo" never occurs in Vietnamese — the horn always spans the pair, so
-        // "ru7ou" comes out as "rươu" (see the same rule in Telex).
         bare: syllable.replace("ưo", "ươ"),
         tone,
         is_foreign: false,
@@ -127,9 +109,7 @@ pub fn process_vni(raw: &str) -> MethodResult {
     }
 }
 
-/// Turn displayed text back into the canonical VNI keys that produce it:
-/// "rượ" → "ru7o75". Used by Backspace so composing can continue after a
-/// character is deleted.
+/// Turn displayed text back into the canonical VNI keys that produce it: "rượ" → "ru7o75".
 pub fn encode_vni(text: &str) -> String {
     use crate::tone_placement::char_tone;
     use crate::validator::base_vowel;
@@ -141,7 +121,7 @@ pub fn encode_vni(text: &str) -> String {
         let lower = ch.to_lowercase().next().unwrap_or(ch);
         let t = char_tone(lower);
         if t != Tone::Flat {
-            tone = t; // a syllable carries at most one tone; last one wins
+            tone = t;
         }
         let base = base_vowel(lower).unwrap_or(lower);
         let (letter, digit) = match base {
@@ -154,7 +134,11 @@ pub fn encode_vni(text: &str) -> String {
             'đ' => ('d', Some('9')),
             other => (other, None),
         };
-        out.push(if upper { letter.to_uppercase().next().unwrap_or(letter) } else { letter });
+        out.push(if upper {
+            letter.to_uppercase().next().unwrap_or(letter)
+        } else {
+            letter
+        });
         if let Some(d) = digit {
             out.push(d);
         }
@@ -174,8 +158,6 @@ pub fn encode_vni(text: &str) -> String {
     out
 }
 
-/// If the last vowel carries one of `marked`, put it back to its base form.
-/// Returns whether anything was undone.
 fn undo_diacritic(s: &mut String, marked: &[char]) -> bool {
     let chars: Vec<char> = s.chars().collect();
     for i in (0..chars.len()).rev() {
@@ -183,8 +165,6 @@ fn undo_diacritic(s: &mut String, marked: &[char]) -> bool {
             continue;
         }
         if !marked.contains(&chars[i]) {
-            // The most recent vowel does not carry this mark, so there is nothing
-            // to undo — the digit should apply normally instead.
             return false;
         }
         let base = match chars[i] {
@@ -206,14 +186,16 @@ fn undo_diacritic(s: &mut String, marked: &[char]) -> bool {
 }
 
 fn is_vowel(c: char) -> bool {
-    matches!(c, 'a'|'â'|'ă'|'e'|'ê'|'i'|'o'|'ô'|'ơ'|'u'|'ư'|'y')
+    matches!(
+        c,
+        'a' | 'â' | 'ă' | 'e' | 'ê' | 'i' | 'o' | 'ô' | 'ơ' | 'u' | 'ư' | 'y'
+    )
 }
 
 fn has_vowel(s: &str) -> bool {
     s.chars().any(is_vowel)
 }
 
-/// Apply circumflex to the last eligible vowel (a→â, e→ê, o→ô). Returns true if applied.
 fn apply_circumflex(s: &mut String) -> bool {
     replace_last_vowel(s, |c| match c {
         'a' => Some('â'),
@@ -223,10 +205,7 @@ fn apply_circumflex(s: &mut String) -> bool {
     })
 }
 
-/// Apply horn (o→ơ, u→ư). Returns true if applied.
-/// The compound "uo" cluster → "ươ" both chars together.
 fn apply_horn(s: &mut String) -> bool {
-    // Handle "uo" compound: both u and o get horn together.
     if let Some(pos) = s.find("uo") {
         let mut new = s[..pos].to_string();
         new.push('ư');
@@ -235,14 +214,12 @@ fn apply_horn(s: &mut String) -> bool {
         *s = new;
         return true;
     }
-    // Single vowel: try 'u' first, then 'o'.
     if replace_last_vowel(s, |c| if c == 'u' { Some('ư') } else { None }) {
         return true;
     }
     replace_last_vowel(s, |c| if c == 'o' { Some('ơ') } else { None })
 }
 
-/// Apply breve (a→ă). Returns true if applied.
 fn apply_breve(s: &mut String) -> bool {
     replace_last_vowel(s, |c| match c {
         'a' => Some('ă'),
@@ -250,7 +227,6 @@ fn apply_breve(s: &mut String) -> bool {
     })
 }
 
-/// Replace 'd' at the start of the syllable with 'đ'. Returns true if applied.
 fn apply_stroke_d(s: &mut String) -> bool {
     if s.starts_with('d') {
         s.replace_range(..1, "đ");
@@ -260,16 +236,17 @@ fn apply_stroke_d(s: &mut String) -> bool {
     }
 }
 
-/// Replace the last vowel in `s` using `f`. Returns true if a replacement was made.
 fn replace_last_vowel(s: &mut String, f: impl Fn(char) -> Option<char>) -> bool {
     let chars: Vec<char> = s.chars().collect();
-    // Find rightmost vowel.
     for i in (0..chars.len()).rev() {
         if let Some(replacement) = f(chars[i]) {
-            // Rebuild the string.
             let mut new = String::new();
             for (j, &c) in chars.iter().enumerate() {
-                if j == i { new.push(replacement); } else { new.push(c); }
+                if j == i {
+                    new.push(replacement);
+                } else {
+                    new.push(c);
+                }
             }
             *s = new;
             return true;
@@ -295,7 +272,6 @@ mod tests {
         assert_eq!(vni("ha3"), ("ha".into(), Tone::Hook));
         assert_eq!(vni("ha4"), ("ha".into(), Tone::Tilde));
         assert_eq!(vni("ha5"), ("ha".into(), Tone::Dot));
-        // 0 removes an existing tone; with no tone it is the digit 0.
         assert_eq!(vni("ha10"), ("ha".into(), Tone::Flat));
         assert_eq!(vni("ha0"), ("ha0".into(), Tone::Flat));
     }
@@ -325,25 +301,21 @@ mod tests {
 
     #[test]
     fn repeating_a_digit_undoes_it_and_types_it() {
-        // The reported case: "đoán" then '1' is "đoan1".
         assert_eq!(vni("d9oan11").0, "đoan1");
         assert_eq!(vni("a11").0, "a1");
         assert_eq!(vni("a66").0, "a6");
         assert_eq!(vni("o77").0, "o7");
         assert_eq!(vni("a88").0, "a8");
         assert_eq!(vni("d99").0, "d9");
-        // A *different* digit still just changes the tone.
         assert_eq!(vni("a12"), ("a".into(), Tone::Grave));
     }
 
     #[test]
     fn combined() {
-        // "duong7" → ư applied to 'u' → "dương" bare
         let (bare, tone) = vni("duong7");
         assert_eq!(bare, "dương");
         assert_eq!(tone, Tone::Flat);
 
-        // "duong71" → ư + sắc
         let (bare, tone) = vni("duong71");
         assert_eq!(bare, "dương");
         assert_eq!(tone, Tone::Sharp);

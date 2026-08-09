@@ -1,21 +1,3 @@
-//! Interactive engine harness — type keystroke sequences, see what lands on
-//! screen. Pure engine, no keyboard hook: needs **no Accessibility
-//! permission** and works in any terminal (CI, SSH, containers).
-//!
-//! ```sh
-//! cargo run -p vnkey-core --example repl
-//! ```
-//!
-//! Each input line is typed through a fresh engine, character by character,
-//! and the resulting on-screen text is printed. Spaces and punctuation act as
-//! word boundaries exactly as they do live.
-//!
-//! Commands:
-//!   :telex / :vni        switch input method
-//!   :modern / :classic   switch tone placement
-//!   :restore on|off      toggle auto-restore of non-Vietnamese words
-//!   :quit                exit
-
 use std::io::{self, BufRead, Write};
 
 use vnkey_core::{Config, EditAction, Engine, InputMethod, Keystroke, TonePlacementMode};
@@ -64,8 +46,6 @@ fn prompt(config: &Config) {
     let _ = io::stdout().flush();
 }
 
-/// Feed `seq` through a fresh engine and apply the edit actions to a screen
-/// buffer, the way the platform layer applies them to the focused text field.
 fn type_through(seq: &str, config: &Config) -> String {
     let mut engine = Engine::new(config.clone());
     let mut screen = String::new();
@@ -73,7 +53,6 @@ fn type_through(seq: &str, config: &Config) -> String {
     for ch in seq.chars() {
         let actions = engine.process(Keystroke::char(ch));
         if actions.is_empty() {
-            // Engine passed the key through; the app would print it itself.
             screen.push(ch);
             continue;
         }

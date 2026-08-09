@@ -1,12 +1,9 @@
 use crate::types::EditAction;
 
-/// Tracks what raw keystrokes have been accumulated since the last word boundary,
-/// and what string is currently displayed on-screen for the current word.
+/// The raw keystrokes since the last word boundary, and the word currently displayed on-screen.
 #[derive(Debug, Default, Clone)]
 pub struct CompositionBuffer {
-    /// Raw keystrokes accumulated for the current word.
     pub raw: String,
-    /// The string currently showing on-screen (what the shell has displayed so far).
     pub displayed: String,
 }
 
@@ -19,8 +16,7 @@ impl CompositionBuffer {
         self.raw.push(ch);
     }
 
-    /// Remove the last raw keystroke (Backspace support). Returns `false` if
-    /// the buffer was already empty.
+    /// Remove the last raw keystroke. `false` if the buffer was already empty.
     pub fn pop(&mut self) -> bool {
         self.raw.pop().is_some()
     }
@@ -30,12 +26,10 @@ impl CompositionBuffer {
         self.displayed.clear();
     }
 
-    /// Compute the minimal edit actions to transition from `self.displayed` to `target`.
-    /// Updates `self.displayed` to `target`.
+    /// Minimal edit actions from `self.displayed` to `target`, which then becomes `self.displayed`.
     pub fn diff_to(&mut self, target: &str) -> Vec<EditAction> {
         let mut actions = Vec::new();
 
-        // Find the longest common prefix (in chars) between displayed and target.
         let common: usize = self
             .displayed
             .chars()
@@ -43,10 +37,9 @@ impl CompositionBuffer {
             .take_while(|(a, b)| a == b)
             .count();
 
-        let displayed_chars: Vec<char> = self.displayed.chars().collect();
         let target_tail: String = target.chars().skip(common).collect();
 
-        let to_delete = displayed_chars.len() - common;
+        let to_delete = self.displayed.chars().count() - common;
         if to_delete > 0 {
             actions.push(EditAction::Backspace(to_delete as u8));
         }
@@ -58,7 +51,7 @@ impl CompositionBuffer {
         actions
     }
 
-    /// Produce actions to clear everything currently displayed, then reset.
+    /// Actions to clear everything currently displayed, then reset.
     pub fn clear_actions(&mut self) -> Vec<EditAction> {
         let len = self.displayed.chars().count();
         let mut actions = Vec::new();
@@ -76,24 +69,34 @@ mod tests {
 
     #[test]
     fn diff_no_change() {
-        let mut buf = CompositionBuffer { raw: String::new(), displayed: "ha".into() };
+        let mut buf = CompositionBuffer {
+            raw: String::new(),
+            displayed: "ha".into(),
+        };
         let actions = buf.diff_to("ha");
         assert!(actions.is_empty());
     }
 
     #[test]
     fn diff_extend() {
-        // "h" → "hà": common prefix "h" (1 char), delete 0, insert "à"
-        let mut buf = CompositionBuffer { raw: String::new(), displayed: "h".into() };
+        let mut buf = CompositionBuffer {
+            raw: String::new(),
+            displayed: "h".into(),
+        };
         let actions = buf.diff_to("hà");
         assert_eq!(actions, vec![EditAction::Insert("à".into())]);
     }
 
     #[test]
     fn diff_replace() {
-        // "ha" → "há": common prefix "h" (1 char), delete 1 ('a'), insert 'á'
-        let mut buf = CompositionBuffer { raw: String::new(), displayed: "ha".into() };
+        let mut buf = CompositionBuffer {
+            raw: String::new(),
+            displayed: "ha".into(),
+        };
         let actions = buf.diff_to("há");
-        assert_eq!(actions, vec![EditAction::Backspace(1), EditAction::Insert("á".into())]);
+        assert_eq!(
+            actions,
+            vec![EditAction::Backspace(1), EditAction::Insert("á".into())]
+        );
     }
 }

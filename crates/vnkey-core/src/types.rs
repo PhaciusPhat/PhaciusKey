@@ -16,14 +16,12 @@ pub enum Tone {
     Dot,
 }
 
-/// Input method convention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMethod {
     Telex,
     Vni,
 }
 
-/// Tone-mark placement strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TonePlacementMode {
     /// Standard modern Vietnamese orthography (default).
@@ -32,32 +30,23 @@ pub enum TonePlacementMode {
     Classic,
 }
 
-/// Engine configuration — owned by the shell, passed into every call.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub method: InputMethod,
     pub placement: TonePlacementMode,
     /// When false the engine is a no-op and all keys pass through.
     pub enabled: bool,
-    /// When false, invalid sequences are passed through literally (no diacritics forced).
+    /// When false, invalid sequences are passed through literally.
     pub auto_restore: bool,
-    /// Text-expansion macros: an on-screen word matching a key exactly
-    /// (case-sensitive) is replaced with its value when the word commits.
+    /// An on-screen word matching a key exactly (case-sensitive) is replaced when it commits.
     pub macros: std::collections::HashMap<String, String>,
-    /// Telex: a `w` with no vowel to put a horn on types `ư` ("thw" → "thư",
-    /// "w" → "ư"). Standard in Unikey and OpenKey, hence on by default; the
-    /// key still types a literal `w` where `ư` cannot start a syllable.
+    /// Telex: a `w` with no vowel to put a horn on types `ư` ("thw" → "thư").
     pub standalone_w: bool,
-    /// Quick Telex: a doubled consonant at the start of a word expands to the
-    /// digraph it stands for ("cc" → "ch", "nn" → "ng"). Off by default, as in
-    /// OpenKey — it costs the ability to type a literal doubled consonant.
+    /// Quick Telex: a doubled consonant expands to the digraph it stands for ("cc" → "ch").
     pub quick_telex: bool,
-    /// Quick start consonants: `f` → "ph", `j` → "gi", `w` → "qu" as the first
-    /// letter of a word. Off by default: these letters are Telex tone and horn
-    /// keys everywhere else, so the shortcut is a deliberate trade.
+    /// Quick start consonants: `f` → "ph", `j` → "gi", `w` → "qu" at the start of a word.
     pub quick_start_consonant: bool,
-    /// Quick end consonants: after a vowel, a final `g` → "ng", `h` → "nh",
-    /// `k` → "ch". Off by default for the same reason.
+    /// Quick end consonants: after a vowel, `g` → "ng", `h` → "nh", `k` → "ch".
     pub quick_end_consonant: bool,
     /// Capitalize the first letter of a sentence as it is typed.
     pub auto_capitalize: bool,
@@ -83,18 +72,24 @@ impl Default for Config {
 /// A single keystroke delivered to the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Keystroke {
-    /// The Unicode character produced by the key (after basic keyboard mapping).
+    /// The Unicode character produced by the key.
     pub ch: char,
-    /// True for space, punctuation, navigation keys, or a shell-supplied focus-change signal.
+    /// True for space, punctuation, navigation keys, or a focus-change signal.
     pub is_boundary: bool,
 }
 
 impl Keystroke {
     pub fn char(ch: char) -> Self {
-        Self { ch, is_boundary: false }
+        Self {
+            ch,
+            is_boundary: false,
+        }
     }
     pub fn boundary() -> Self {
-        Self { ch: ' ', is_boundary: true }
+        Self {
+            ch: ' ',
+            is_boundary: true,
+        }
     }
 }
 

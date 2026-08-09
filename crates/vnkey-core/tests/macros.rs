@@ -1,17 +1,18 @@
-//! Macros / text expansion: a word matching a user-defined trigger is
-//! replaced with its expansion when the word is committed by a boundary.
-
 use std::collections::HashMap;
 
 use vnkey_core::{Config, EditAction, Engine, Keystroke};
 
 fn engine_with_macros(pairs: &[(&str, &str)]) -> Engine {
-    let macros: HashMap<String, String> =
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    Engine::new(Config { macros, ..Default::default() })
+    let macros: HashMap<String, String> = pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    Engine::new(Config {
+        macros,
+        ..Default::default()
+    })
 }
 
-/// Type `s` and apply the actions to a screen buffer, like the platform layer.
 fn type_through(e: &mut Engine, s: &str) -> String {
     let mut screen = String::new();
     for ch in s.chars() {
@@ -48,8 +49,6 @@ fn punctuation_expands_too() {
 
 #[test]
 fn explicit_commit_expands_without_a_boundary_char() {
-    // Enter/Tab reach the engine as a plain commit (the shell passes the key
-    // itself through to the app).
     let mut e = engine_with_macros(&[("vd", "ví dụ")]);
     let mut screen = type_through(&mut e, "vd");
     for action in e.commit_word() {
@@ -73,8 +72,6 @@ fn non_triggers_are_left_alone() {
 
 #[test]
 fn trigger_matches_the_displayed_word() {
-    // The trigger is what the user *sees*: with Telex on, typing "email" would
-    // show "email" (auto-restored), so a trigger can be any on-screen word.
     let mut e = engine_with_macros(&[("email", "phat.le@example.com")]);
     assert_eq!(type_through(&mut e, "email "), "phat.le@example.com ");
 }
