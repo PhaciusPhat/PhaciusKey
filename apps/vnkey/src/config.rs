@@ -394,13 +394,11 @@ impl Shortcut {
 /// `poisoned` outlives `armed` deliberately. Releasing a third modifier returns the held
 /// set to the target, and without it the gesture would re-arm mid-flight.
 #[derive(Debug, Default, Clone, Copy)]
-#[allow(dead_code)]
 pub struct ChordWatch {
     armed: bool,
     poisoned: bool,
 }
 
-#[allow(dead_code)]
 impl ChordWatch {
     pub const fn new() -> Self {
         Self {
