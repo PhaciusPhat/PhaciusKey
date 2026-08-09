@@ -87,7 +87,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         state::toggle_vietnamese();
     }
     if !is_key_up && modifier_bit(vk).is_none() {
-        chord_interrupted();
+        chord_interrupted(vk);
     }
 
     // A low-level hook reports a held key as repeated key-downs with nothing to
@@ -194,12 +194,12 @@ fn modifier_only_target() -> Option<u8> {
     sc.key.is_none().then(|| sc.modifier_mask())
 }
 
-fn chord_interrupted() {
+fn chord_interrupted(vk: u16) {
     if modifier_only_target().is_none() {
         return;
     }
     if let Ok(mut watch) = CHORD.lock() {
-        watch.interrupted();
+        watch.interrupted(held_mask(vk, false));
     }
 }
 

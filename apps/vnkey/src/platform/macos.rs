@@ -107,6 +107,14 @@ fn held_mask(flags: CGEventFlags) -> u8 {
     })
 }
 
+fn spoil(held: u8) {
+    CHORD.with(|chord| {
+        let mut watch = chord.get();
+        watch.interrupted(held);
+        chord.set(watch);
+    });
+}
+
 pub struct Hook {
     _thread: std::thread::JoinHandle<()>,
 }
@@ -186,6 +194,7 @@ unsafe extern "C" fn tap_callback(
         ET_FLAGS_CHANGED => {
             // Never swallowed: another application would be left believing a modifier is
             // still held.
+            // SAFETY: borrowed, not owned — the system still owns the event.
             let cg = ManuallyDrop::new(CGEvent::from_ptr(event as *mut _));
             if modifier_only_toggle_fired(held_mask(cg.get_flags())) {
                 state::toggle_vietnamese();
@@ -193,11 +202,9 @@ unsafe extern "C" fn tap_callback(
             return event;
         }
         ET_LEFT_MOUSE_DOWN | ET_RIGHT_MOUSE_DOWN => {
-            CHORD.with(|chord| {
-                let mut watch = chord.get();
-                watch.interrupted();
-                chord.set(watch);
-            });
+            // SAFETY: borrowed, not owned — the system still owns the event.
+            let cg = ManuallyDrop::new(CGEvent::from_ptr(event as *mut _));
+            spoil(held_mask(cg.get_flags()));
             state::reset();
             return event;
         }
@@ -212,11 +219,7 @@ unsafe extern "C" fn tap_callback(
         return event;
     }
 
-    CHORD.with(|chord| {
-        let mut watch = chord.get();
-        watch.interrupted();
-        chord.set(watch);
-    });
+    spoil(held_mask(cg.get_flags()));
 
     let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
 

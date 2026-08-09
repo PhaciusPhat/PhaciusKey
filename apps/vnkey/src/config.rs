@@ -426,9 +426,9 @@ impl ChordWatch {
         false
     }
 
-    pub fn interrupted(&mut self) {
+    pub fn interrupted(&mut self, held: u8) {
         self.armed = false;
-        self.poisoned = true;
+        self.poisoned = held != 0;
     }
 }
 
@@ -870,9 +870,34 @@ mod tests {
         let mut watch = ChordWatch::default();
         assert!(!watch.modifiers(MOD_CTRL, CS));
         assert!(!watch.modifiers(CS, CS));
-        watch.interrupted();
+        watch.interrupted(CS);
         assert!(!watch.modifiers(MOD_CTRL, CS));
         assert!(!watch.modifiers(0, CS));
+    }
+
+    /// Typing a plain letter produces no modifier event, so nothing would clear a
+    /// poison set with no modifiers held — and the next gesture would be swallowed.
+    #[test]
+    fn typing_before_a_gesture_does_not_swallow_it() {
+        let mut watch = ChordWatch::default();
+        watch.interrupted(0);
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(CS, CS));
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(
+            watch.modifiers(0, CS),
+            "first gesture after typing should fire"
+        );
+    }
+
+    #[test]
+    fn a_click_while_the_modifiers_are_held_still_spoils_it() {
+        let mut watch = ChordWatch::default();
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(CS, CS));
+        watch.interrupted(CS);
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(0, CS), "a click mid-gesture must spoil it");
     }
 
     #[test]
