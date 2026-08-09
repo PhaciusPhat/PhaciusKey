@@ -78,6 +78,7 @@ is fixed here because this work depends on that path being cheap.
 | Testing the alerts | A hidden `--show-alert <kind>` flag, following `--export-iconset`. |
 | The panel's switch subtitle | Describes global scope only. It never names the current application. |
 | Standing in an excluded application | Said in a warning row, not in the switch's subtitle. |
+| Where that subtitle is built | `payload.rs`, so its counting and pluralisation get a unit test. |
 
 ---
 
@@ -226,43 +227,7 @@ pointer, testable the way `panel_origin` already is.
 and with them the `osascript` shellout and the `eprintln!` fallback. Windows
 gets visible update alerts for the first time.
 
----
-
-## Part C — The panel's Vietnamese switch
-
-The switch is machine-wide and stays machine-wide. What changes is the line
-underneath it, at `panel.js:63`, which today resolves to `"On in Safari"` or
-`"Off in Safari"` and so reads as a Safari switch.
-
-The subtitle now only ever describes global scope:
-
-| Excluded applications | Subtitle |
-|---|---|
-| none | `Everywhere` |
-| one | `Everywhere except 1 app` |
-| more | `Everywhere except <n> apps` |
-
-Standing inside an excluded application is worth saying, but not there. It
-moves to a warning row using the `.warn` box the panel already carries for the
-secure-input notice, reading `<app> is one of them`, hidden otherwise:
-
-```
-⚠ Secure input on — typing paused        (existing, unchanged)
-
-PhaciusKey                                                   v0.0.25
-Vietnamese typing                                     ⌃ ⇧ V   ●───
-Everywhere except 3 apps
-⚠ Safari is one of them
-```
-
-No Rust change is required: `excluded_apps`, `excluded_here` and `current_app`
-are already in the payload (`payload.rs:48–52`). The panel simply stops reading
-`vietnamese_here`, which stays in the payload for the settings window — one
-payload serves every surface, and a surface ignoring a field it does not use is
-the existing arrangement.
-
-`panel.html` gains one element for the warning row. The panel measures its own
-height, so the row appearing and disappearing needs no sizing work.
+### The activation risk, and how it is handled
 
 The app runs as an `Accessory` on macOS (`main.rs:72`) — no Dock icon, never the
 active application. Two of the four alerts appear unprompted, one of them
@@ -314,6 +279,50 @@ function called at show time.
 
 ---
 
+## Part C — The panel's Vietnamese switch
+
+The switch is machine-wide and stays machine-wide. What changes is the line
+underneath it, at `panel.js:63`, which today resolves to `"On in Safari"` or
+`"Off in Safari"` and so reads as a Safari switch.
+
+The subtitle now only ever describes global scope:
+
+| Excluded applications | Subtitle |
+|---|---|
+| none | `Everywhere` |
+| one | `Everywhere except 1 app` |
+| more | `Everywhere except <n> apps` |
+
+Standing inside an excluded application is worth saying, but not there. It
+moves to a warning row using the `.warn` box the panel already carries for the
+secure-input notice, reading `<app> is one of them`, hidden otherwise:
+
+```
+⚠ Secure input on — typing paused        (existing, unchanged)
+
+PhaciusKey                                                   v0.0.25
+Vietnamese typing                                     ⌃ ⇧ V   ●───
+Everywhere except 3 apps
+⚠ Safari is one of them
+```
+
+The subtitle string is built in `payload.rs` as `excluded_summary`, not in the
+page. Presentation logic in the payload is a slight anomaly — the payload
+otherwise carries state — and it is accepted here to buy a unit test on the
+counting and pluralisation, since the repository has no JavaScript test
+harness. The page assigns the field and does no arithmetic.
+
+`excluded_here` and `current_app` are already in the payload
+(`payload.rs:48–52`) and carry the warning row. The panel stops reading
+`vietnamese_here`, which stays in the payload for the settings window — one
+payload serves every surface, and a surface ignoring a field it does not use is
+the existing arrangement.
+
+`panel.html` gains one element for the warning row. The panel measures its own
+height, so the row appearing and disappearing needs no sizing work.
+
+---
+
 ## Testing
 
 Unit tests, run by `cargo test --workspace`:
@@ -332,6 +341,7 @@ Unit tests, run by `cargo test --workspace`:
 - `centre_origin` on a work area that does not start at the origin, matching
   the existing `panel_origin` coverage.
 - The alert page assembles with the theme and its own parts.
+- `excluded_summary` for none, one and several excluded applications.
 - `open_accessibility` and `open_releases` added to the existing *every command
   the pages send is understood* test.
 
@@ -343,9 +353,8 @@ By hand, on macOS:
   `⌃⇧` held with `⌥` added does not toggle.
 - Recording `⌃⇧` by holding and releasing, and `⌃⇧V` by holding and pressing.
 - The panel row in all three states: no exclusions, exclusions set while
-  standing outside them, and standing inside one. Part C is entirely page code,
-  and the repository has no JavaScript test harness, so this is the only check
-  it gets — worth knowing rather than discovering later.
+  standing outside them, and standing inside one. The subtitle text itself is
+  unit-tested; what this checks is the layout and the warning row.
 - Flipping the switch while standing in an excluded application: the switch
   moves, the warning row stays, and typing stays off there. This is the case
   the old copy made incoherent.
