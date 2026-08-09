@@ -834,7 +834,10 @@ mod tests {
 
     fn watch_sequence(target: u8, steps: &[u8]) -> usize {
         let mut watch = ChordWatch::default();
-        steps.iter().filter(|held| watch.modifiers(**held, target)).count()
+        steps
+            .iter()
+            .filter(|held| watch.modifiers(**held, target))
+            .count()
     }
 
     const CS: u8 = MOD_CTRL | MOD_SHIFT;
