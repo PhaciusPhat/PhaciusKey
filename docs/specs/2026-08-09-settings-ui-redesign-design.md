@@ -1,6 +1,7 @@
 # Settings and menu redesign: custom panel, tabbed window, exclusion list
 
-**Date:** 2026-08-09 · **Status:** designed, not yet implemented
+**Date:** 2026-08-09 · **Status:** implemented in 0.0.24. Windows still unverified
+on real hardware.
 
 ## Problem
 

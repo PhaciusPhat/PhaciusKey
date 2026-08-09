@@ -51,6 +51,16 @@ jobs:
             exit 1
           fi
 
+      # The published site advertises a download by version, so a stale number
+      # here points visitors at a release that is not the one being cut.
+      - name: Verify site version matches
+        run: |
+          site_version="$(grep -m1 '^version:' docs/_config.yml | sed -E 's/^version:[[:space:]]*//')"
+          if [ "$site_version" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::docs/_config.yml version $site_version does not match Info.plist ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
       - name: Refuse to release without the signing secret
         env:
           RELEASE_CERT_P12_BASE64: ${{ secrets.RELEASE_CERT_P12_BASE64 }}

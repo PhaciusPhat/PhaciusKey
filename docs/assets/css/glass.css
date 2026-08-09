@@ -351,6 +351,21 @@ code {
   padding: 0 26px 20px;
   min-height: 38px;
 }
+/* Inline keycaps in prose. The demo strip has its own, louder treatment below,
+   which outranks this by specificity. */
+.pk-main kbd {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--glass-border);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin: 0 1px;
+  white-space: nowrap;
+}
+
 .pk-demo .keys kbd {
   font-family: var(--font-mono);
   font-size: 13px;
