@@ -30,8 +30,9 @@ CoreGraphics event tap on macOS, `SetWindowsHookEx` on Windows.
   precondition — and stops. See `.claude/skills/commenting-only-constraints/SKILL.md`.
 - **Follow `.claude/skills/rust-best-practices/`.** Invoke it before writing code.
 - **`unwrap`/`expect` are denied outside `cfg(test)`** by the workspace `[lints]` table.
-- **Every task ends green:**
+- **Every task ends green.** All three, because `.github/workflows/ci.yml` runs all three:
   ```sh
+  cargo fmt --check
   cargo test --workspace
   cargo clippy --all-targets --all-features -- -D warnings
   ```
