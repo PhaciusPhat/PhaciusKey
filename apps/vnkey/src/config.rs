@@ -374,17 +374,12 @@ pub fn shortcut_parts(shortcut: &str) -> Vec<String> {
     parts
 }
 
-#[allow(dead_code)]
 pub const MOD_CTRL: u8 = 1;
-#[allow(dead_code)]
 pub const MOD_SHIFT: u8 = 2;
-#[allow(dead_code)]
 pub const MOD_ALT: u8 = 4;
-#[allow(dead_code)]
 pub const MOD_CMD: u8 = 8;
 
 impl Shortcut {
-    #[allow(dead_code)]
     pub fn modifier_mask(&self) -> u8 {
         (if self.ctrl { MOD_CTRL } else { 0 })
             | (if self.shift { MOD_SHIFT } else { 0 })

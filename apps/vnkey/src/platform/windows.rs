@@ -181,7 +181,7 @@ fn is_toggle_shortcut(vk: u16) -> bool {
     if state::shortcut_recording() {
         return false;
     }
-    let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
+    let Some(sc) = state::toggle_shortcut() else {
         return false;
     };
     if sc.key.and_then(config::windows_vk) != Some(vk) {

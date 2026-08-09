@@ -19,7 +19,6 @@ use foreign_types::ForeignType;
 use vnkey_core::EditAction;
 
 use super::KeyboardHook;
-use crate::config;
 use crate::state;
 
 const SYNTHETIC_MARKER: i64 = 0x0056_4E4B_4559;
@@ -265,7 +264,7 @@ fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
     if state::shortcut_recording() {
         return false;
     }
-    let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
+    let Some(sc) = state::toggle_shortcut() else {
         return false;
     };
     let Some(want) = sc.key.and_then(keycode_for) else {
