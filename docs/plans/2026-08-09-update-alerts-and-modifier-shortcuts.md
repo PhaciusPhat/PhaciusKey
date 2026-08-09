@@ -441,8 +441,8 @@ git commit -m "feat(config): add the modifier-only firing rule"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `config.rs` tests — the packing lives in `state.rs` but is pure, so expose it
-there and test it there. Add to `state.rs`:
+The packing is pure, so it is tested where it lives. Add a test module to the bottom of
+`state.rs`:
 
 ```rust
 #[cfg(test)]
@@ -708,7 +708,21 @@ so the current event's own bit is forced rather than read.
 ```rust
 static CHORD: Mutex<config::ChordWatch> = Mutex::new(config::ChordWatch::new());
 
+/// The watch is only consulted for a modifier-only shortcut, so the common case — a
+/// shortcut with a key — never takes this lock. The hook runs on every keystroke and is
+/// watchdogged by `LowLevelHooksTimeout`.
+fn modifier_only_target() -> Option<u8> {
+    if state::shortcut_recording() {
+        return None;
+    }
+    let sc = state::toggle_shortcut()?;
+    sc.key.is_none().then(|| sc.modifier_mask())
+}
+
 fn chord_interrupted() {
+    if modifier_only_target().is_none() {
+        return;
+    }
     if let Ok(mut watch) = CHORD.lock() {
         watch.interrupted();
     }
@@ -741,19 +755,16 @@ fn held_mask(vk: u16, is_key_up: bool) -> u8 {
 }
 
 fn modifier_only_toggle_fired(vk: u16, is_key_up: bool) -> bool {
-    if state::shortcut_recording() {
+    if modifier_bit(vk).is_none() {
         return false;
     }
-    let Some(sc) = state::toggle_shortcut() else {
+    let Some(target) = modifier_only_target() else {
         return false;
     };
-    if sc.key.is_some() || modifier_bit(vk).is_none() {
-        return false;
-    }
     let Ok(mut watch) = CHORD.lock() else {
         return false;
     };
-    watch.modifiers(held_mask(vk, is_key_up), sc.modifier_mask())
+    watch.modifiers(held_mask(vk, is_key_up), target)
 }
 ```
 
@@ -1240,7 +1251,7 @@ html, body { height: auto; }
     action.hidden = !n.action;
     action.textContent = n.action ? n.action.label : "";
     action.onclick = n.action
-      ? function () { send({ cmd: n.action.cmd }); if (n.action.cmd !== "check_updates") close(); else close(); }
+      ? function () { send({ cmd: n.action.cmd }); close(); }
       : null;
 
     reportHeight();
@@ -1399,7 +1410,30 @@ and to `apply_ipc`:
 Extend the `every_command_the_pages_send_is_understood` list with
 `r#"{"cmd":"open_accessibility"}"#` and `r#"{"cmd":"open_releases"}"#`.
 
-- [ ] **Step 6: Run and commit**
+- [ ] **Step 6: Keep `main.rs` compiling**
+
+Adding `Surface::Alert` makes the two `match surface` blocks in `main.rs` non-exhaustive.
+Task 9 gives them behaviour; this task only has to keep the tree green. In the
+`WindowAction::Close` match add:
+
+```rust
+                        Surface::Alert => {}
+```
+
+and change the `WindowAction::Resize(height)` arm to name the surface:
+
+```rust
+                    Some(WindowAction::Resize(height)) => match surface {
+                        Surface::Alert => {}
+                        Surface::Panel | Surface::Settings => {
+                            if let Some(panel) = &panel {
+                                panel.set_content_height(f64::from(height), target);
+                            }
+                        }
+                    },
+```
+
+- [ ] **Step 7: Run and commit**
 
 Run: `cargo test --workspace 2>&1 | tail -20` — Expected: PASS.
 Run: `cargo clippy --all-targets --all-features -- -D warnings`
