@@ -58,13 +58,9 @@
     $("enabled").checked = !!s.enabled;
     $("shortcut").innerHTML = caps(s.shortcut_parts || []);
 
-    // The switch reports the master setting; this line is where it does and
-    // does not apply, which is the part an excluded app changes.
-    $("where").textContent = s.excluded_here
-      ? (s.current_app || "This app") + " never uses it"
-      : s.current_app
-        ? (s.vietnamese_here ? "On in " : "Off in ") + s.current_app
-        : "Everywhere";
+    $("where").textContent = s.excluded_summary;
+    $("excluded").hidden = !s.excluded_here;
+    $("excluded").textContent = "⚠ " + (s.current_app || "This app") + " is one of them";
 
     each($("method").children, function (b) { b.classList.toggle("on", b.dataset.v === s.method); });
     each($("placement").children, function (b) { b.classList.toggle("on", b.dataset.v === s.placement); });

@@ -15,6 +15,16 @@ fn suggestions(installed_apps: &[String], current_app: Option<&str>) -> Vec<Stri
     names
 }
 
+/// The switch is machine-wide, so its caption describes scope and never names the
+/// application in front, which would read as the switch belonging to that application.
+fn excluded_summary(count: usize) -> String {
+    match count {
+        0 => "Everywhere".to_string(),
+        1 => "Everywhere except 1 app".to_string(),
+        n => format!("Everywhere except {n} apps"),
+    }
+}
+
 /// One payload serves every surface. A surface ignores what it does not use,
 /// which costs a little redundant JSON and removes the chance of two payloads
 /// drifting apart.
@@ -47,9 +57,9 @@ pub fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[Str
         "macros_enabled": s.macros_enabled,
         "current_app": current_app,
         "secure_input": crate::platform::secure_input_active(),
-        "vietnamese_here": s.vietnamese_on(current_app),
         "excluded_here": s.excluded_for(current_app),
         "excluded_apps": s.disabled_apps,
+        "excluded_summary": excluded_summary(s.disabled_apps.len()),
         "suggestions": suggestions(installed_apps, current_app),
         "macros": macros,
         "slow_apps": s.slow_apps,
@@ -90,5 +100,17 @@ mod tests {
     fn suggestions_merge_without_repeating_a_name() {
         let names = suggestions(&["Safari".to_string(), "Notes".to_string()], Some("safari"));
         assert_eq!(names, ["Notes", "Safari"]);
+    }
+
+    #[test]
+    fn the_summary_counts_and_pluralises() {
+        assert_eq!(excluded_summary(0), "Everywhere");
+        assert_eq!(excluded_summary(1), "Everywhere except 1 app");
+        assert_eq!(excluded_summary(3), "Everywhere except 3 apps");
+    }
+
+    #[test]
+    fn the_payload_never_scopes_the_switch_to_one_application() {
+        assert_eq!(payload()["excluded_summary"], "Everywhere");
     }
 }

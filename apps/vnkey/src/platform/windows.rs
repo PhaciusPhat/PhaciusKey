@@ -1,7 +1,7 @@
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, LPARAM, LRESULT, WPARAM};
@@ -13,9 +13,9 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyboardLayout, GetKeyboardState, SendInput, ToUnicodeEx, INPUT, INPUT_0,
     INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_BACK,
-    VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F12, VK_HOME, VK_INSERT, VK_LEFT,
-    VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
-    VK_V,
+    VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F12, VK_HOME, VK_INSERT,
+    VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RCONTROL,
+    VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT, WH_KEYBOARD_LL,
@@ -82,6 +82,13 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     }
 
     let vk = kb.vkCode as u16;
+
+    if modifier_only_toggle_fired(vk, is_key_up) {
+        state::toggle_vietnamese();
+    }
+    if !is_key_up && modifier_bit(vk).is_none() {
+        chord_interrupted(vk);
+    }
 
     // A low-level hook reports a held key as repeated key-downs with nothing to
     // mark them as repeats, so the release is what re-arms the shortcut.
@@ -174,6 +181,74 @@ fn call_next(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
 
 static TOGGLE_HELD: AtomicBool = AtomicBool::new(false);
 
+static CHORD: Mutex<config::ChordWatch> = Mutex::new(config::ChordWatch::new());
+
+/// The watch is only consulted for a modifier-only shortcut, so the common case — a
+/// shortcut with a key — never takes this lock. The hook runs on every keystroke and is
+/// watchdogged by `LowLevelHooksTimeout`.
+fn modifier_only_target() -> Option<u8> {
+    if state::shortcut_recording() {
+        return None;
+    }
+    let sc = state::toggle_shortcut()?;
+    sc.key.is_none().then(|| sc.modifier_mask())
+}
+
+fn chord_interrupted(vk: u16) {
+    if modifier_only_target().is_none() {
+        return;
+    }
+    if let Ok(mut watch) = CHORD.lock() {
+        watch.interrupted(held_mask(vk, false));
+    }
+}
+
+/// The modifier bit a virtual-key code carries, if it is a modifier at all.
+fn modifier_bit(vk: u16) -> Option<u8> {
+    Some(match vk {
+        v if v == VK_CONTROL.0 || v == VK_LCONTROL.0 || v == VK_RCONTROL.0 => config::MOD_CTRL,
+        v if v == VK_SHIFT.0 || v == VK_LSHIFT.0 || v == VK_RSHIFT.0 => config::MOD_SHIFT,
+        v if v == VK_MENU.0 || v == VK_LMENU.0 || v == VK_RMENU.0 => config::MOD_ALT,
+        v if v == VK_LWIN.0 || v == VK_RWIN.0 => config::MOD_CMD,
+        _ => return None,
+    })
+}
+
+fn held_mask(vk: u16, is_key_up: bool) -> u8 {
+    let mut mask = (if down(VK_CONTROL) {
+        config::MOD_CTRL
+    } else {
+        0
+    }) | (if down(VK_SHIFT) { config::MOD_SHIFT } else { 0 })
+        | (if down(VK_MENU) { config::MOD_ALT } else { 0 })
+        | (if down(VK_LWIN) || down(VK_RWIN) {
+            config::MOD_CMD
+        } else {
+            0
+        });
+    if let Some(bit) = modifier_bit(vk) {
+        if is_key_up {
+            mask &= !bit;
+        } else {
+            mask |= bit;
+        }
+    }
+    mask
+}
+
+fn modifier_only_toggle_fired(vk: u16, is_key_up: bool) -> bool {
+    if modifier_bit(vk).is_none() {
+        return false;
+    }
+    let Some(target) = modifier_only_target() else {
+        return false;
+    };
+    let Ok(mut watch) = CHORD.lock() else {
+        return false;
+    };
+    watch.modifiers(held_mask(vk, is_key_up), target)
+}
+
 /// Mirrors `platform::macos::is_toggle_shortcut`: the combination has to match
 /// exactly, so a shortcut with a modifier the user is not holding — or one extra
 /// — is left for the focused application.
@@ -181,10 +256,10 @@ fn is_toggle_shortcut(vk: u16) -> bool {
     if state::shortcut_recording() {
         return false;
     }
-    let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
+    let Some(sc) = state::toggle_shortcut() else {
         return false;
     };
-    if config::windows_vk(sc.key) != Some(vk) {
+    if sc.key.and_then(config::windows_vk) != Some(vk) {
         return false;
     }
     down(VK_CONTROL) == sc.ctrl

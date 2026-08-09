@@ -24,7 +24,7 @@ use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
 use crate::config::Settings;
 use crate::platform::{Hook, KeyboardHook};
 use crate::tray::Tray;
-use crate::ui::{Panel, SettingsWindow, Surface, WindowAction};
+use crate::ui::{Alert, Panel, SettingsWindow, Surface, WindowAction};
 
 enum UserEvent {
     UpdateAvailable(String),
@@ -37,7 +37,8 @@ enum UserEvent {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() == Some("--export-iconset") {
+    let args_start = args.next();
+    if args_start.as_deref() == Some("--export-iconset") {
         let Some(dir) = args.next() else {
             eprintln!("usage: vnkey --export-iconset <dir>");
             std::process::exit(2);
@@ -47,6 +48,26 @@ fn main() {
             std::process::exit(1);
         }
         return;
+    }
+
+    let mut forced_alert = None;
+    if args_start.as_deref() == Some("--show-alert") {
+        let Some(kind) = args.next() else {
+            eprintln!(
+                "usage: vnkey --show-alert <updated-needs-permission|install-failed|up-to-date|check-failed>"
+            );
+            std::process::exit(2);
+        };
+        forced_alert = Some(match kind.as_str() {
+            "updated-needs-permission" => update::notice_updated("0.0.1", update::CURRENT, true),
+            "install-failed" => update::notice_install_failed(update::CURRENT, "a sample failure"),
+            "up-to-date" => update::notice_up_to_date(),
+            "check-failed" => update::notice_check_failed("a sample failure"),
+            other => {
+                eprintln!("[vnkey] unknown alert kind: {other}");
+                std::process::exit(2);
+            }
+        });
     }
 
     let mut settings = Settings::load(platform::self_app_name().as_deref());
@@ -70,14 +91,14 @@ fn main() {
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
         let mut event_loop = event_loop;
         event_loop.set_activation_policy(ActivationPolicy::Accessory);
-        run(event_loop);
+        run(event_loop, forced_alert);
     }
 
     #[cfg(not(target_os = "macos"))]
-    run(event_loop);
+    run(event_loop, forced_alert);
 }
 
-fn run(event_loop: EventLoop<UserEvent>) -> ! {
+fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -> ! {
     let proxy = event_loop.create_proxy();
     let menu_channel = MenuEvent::receiver();
     let tray_channel = TrayIconEvent::receiver();
@@ -94,6 +115,8 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
     let mut permission_requested = false;
     let mut settings_win: Option<SettingsWindow> = None;
     let mut panel: Option<Panel> = None;
+    let mut alert: Option<Alert> = None;
+    let mut forced_alert = forced_alert;
 
     event_loop.run(move |event, target, control_flow| {
         match event {
@@ -114,7 +137,14 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                         }
                     }
                 }
-                announce_completed_update();
+                match forced_alert.take() {
+                    Some(notice) => show_alert(&mut alert, &notice, target, &proxy),
+                    None => {
+                        if let Some(notice) = completed_update_notice() {
+                            show_alert(&mut alert, &notice, target, &proxy);
+                        }
+                    }
+                }
                 spawn_update_check(proxy.clone());
                 spawn_secure_input_watch(proxy.clone());
                 if std::env::args().any(|a| a == "--settings-window") {
@@ -142,7 +172,8 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
             Event::UserEvent(UserEvent::UpdateFailed(version, reason)) => {
                 eprintln!("[vnkey] automatic update to {version} failed: {reason}");
                 update::set_status(update::Status::Failed(reason.clone()));
-                installer::announce_failure(&version, &reason);
+                let notice = update::notice_install_failed(&version, &reason);
+                show_alert(&mut alert, &notice, target, &proxy);
             }
             Event::UserEvent(UserEvent::UpdateCheckDone(result)) => match result {
                 Ok(Some(version)) => {
@@ -151,11 +182,13 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                 }
                 Ok(None) => {
                     update::set_status(update::Status::Idle);
-                    installer::announce(&format!("PhaciusKey {} is up to date.", update::CURRENT));
+                    let notice = update::notice_up_to_date();
+                    show_alert(&mut alert, &notice, target, &proxy);
                 }
                 Err(e) => {
                     update::set_status(update::Status::Failed(e.clone()));
-                    installer::announce(&format!("Could not check for updates.\n\n{e}"));
+                    let notice = update::notice_check_failed(&e);
+                    show_alert(&mut alert, &notice, target, &proxy);
                 }
             },
             Event::UserEvent(UserEvent::StateChanged) => {
@@ -174,17 +207,29 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                                 win.hide();
                             }
                         }
+                        Surface::Alert => {
+                            if let Some(win) = &alert {
+                                win.hide();
+                            }
+                        }
                     },
                     Some(WindowAction::Drag) => {
                         if let Some(win) = &settings_win {
                             win.drag();
                         }
                     }
-                    Some(WindowAction::Resize(height)) => {
-                        if let Some(panel) = &panel {
-                            panel.set_content_height(f64::from(height), target);
+                    Some(WindowAction::Resize(height)) => match surface {
+                        Surface::Alert => {
+                            if let Some(win) = &alert {
+                                win.set_content_height(f64::from(height), target);
+                            }
                         }
-                    }
+                        Surface::Panel | Surface::Settings => {
+                            if let Some(panel) = &panel {
+                                panel.set_content_height(f64::from(height), target);
+                            }
+                        }
+                    },
                     Some(WindowAction::OpenSettings) => {
                         if let Some(panel) = &panel {
                             panel.hide();
@@ -295,6 +340,26 @@ fn push_state(tray: &Option<Tray>, settings_win: &Option<SettingsWindow>, panel:
     }
 }
 
+fn show_alert(
+    alert: &mut Option<Alert>,
+    notice: &update::Notice,
+    target: &tao::event_loop::EventLoopWindowTarget<UserEvent>,
+    proxy: &EventLoopProxy<UserEvent>,
+) {
+    if alert.is_none() {
+        match Alert::new(target, proxy.clone()) {
+            Ok(win) => *alert = Some(win),
+            Err(e) => {
+                eprintln!("[vnkey] failed to create the alert window: {e}");
+                return;
+            }
+        }
+    }
+    if let Some(win) = alert {
+        win.show(notice, target);
+    }
+}
+
 fn open_settings(
     settings_win: &mut Option<SettingsWindow>,
     target: &tao::event_loop::EventLoopWindowTarget<UserEvent>,
@@ -386,17 +451,16 @@ fn start_install(proxy: &EventLoopProxy<UserEvent>, version: String) {
     }
 }
 
-fn announce_completed_update() {
+fn completed_update_notice() -> Option<update::Notice> {
     let previous = state::settings().last_seen_version;
-    if let Some(prev) = previous.as_deref() {
-        if prev != update::CURRENT {
-            let needs_permission = !platform::permission_granted();
-            installer::announce_update(prev, update::CURRENT, needs_permission);
-        }
-    }
+    let notice = previous
+        .as_deref()
+        .filter(|prev| *prev != update::CURRENT)
+        .map(|prev| update::notice_updated(prev, update::CURRENT, !platform::permission_granted()));
     if previous.as_deref() != Some(update::CURRENT) {
         state::update(|s| s.last_seen_version = Some(update::CURRENT.to_string()));
     }
+    notice
 }
 
 pub(crate) fn open_config_file() {

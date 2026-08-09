@@ -34,6 +34,7 @@ const VK_KP_ENTER: u16 = 0x4C;
 const ET_LEFT_MOUSE_DOWN: u32 = 1;
 const ET_RIGHT_MOUSE_DOWN: u32 = 3;
 const ET_KEY_DOWN: u32 = 10;
+const ET_FLAGS_CHANGED: u32 = 12;
 const ET_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
 const ET_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 
@@ -83,6 +84,35 @@ extern "C" {
 
 thread_local! {
     static TAP_PORT: Cell<CFMachPortRef> = const { Cell::new(ptr::null_mut()) };
+    static CHORD: Cell<config::ChordWatch> = const { Cell::new(config::ChordWatch::new()) };
+}
+
+fn held_mask(flags: CGEventFlags) -> u8 {
+    (if flags.contains(CGEventFlags::CGEventFlagControl) {
+        config::MOD_CTRL
+    } else {
+        0
+    }) | (if flags.contains(CGEventFlags::CGEventFlagShift) {
+        config::MOD_SHIFT
+    } else {
+        0
+    }) | (if flags.contains(CGEventFlags::CGEventFlagAlternate) {
+        config::MOD_ALT
+    } else {
+        0
+    }) | (if flags.contains(CGEventFlags::CGEventFlagCommand) {
+        config::MOD_CMD
+    } else {
+        0
+    })
+}
+
+fn spoil(held: u8) {
+    CHORD.with(|chord| {
+        let mut watch = chord.get();
+        watch.interrupted(held);
+        chord.set(watch);
+    });
 }
 
 pub struct Hook {
@@ -115,7 +145,10 @@ impl KeyboardHook for Hook {
 }
 
 fn create_tap() -> Result<(CFMachPort, CFRunLoopSource), String> {
-    let mask: u64 = (1 << ET_KEY_DOWN) | (1 << ET_LEFT_MOUSE_DOWN) | (1 << ET_RIGHT_MOUSE_DOWN);
+    let mask: u64 = (1 << ET_KEY_DOWN)
+        | (1 << ET_FLAGS_CHANGED)
+        | (1 << ET_LEFT_MOUSE_DOWN)
+        | (1 << ET_RIGHT_MOUSE_DOWN);
 
     // tap=HID(0), place=HeadInsert(0), options=Default(0).
     let port_ref = unsafe { CGEventTapCreate(0, 0, 0, mask, tap_callback, ptr::null_mut()) };
@@ -158,7 +191,20 @@ unsafe extern "C" fn tap_callback(
             });
             return event;
         }
+        ET_FLAGS_CHANGED => {
+            // Never swallowed: another application would be left believing a modifier is
+            // still held.
+            // SAFETY: borrowed, not owned — the system still owns the event.
+            let cg = ManuallyDrop::new(CGEvent::from_ptr(event as *mut _));
+            if modifier_only_toggle_fired(held_mask(cg.get_flags())) {
+                state::toggle_vietnamese();
+            }
+            return event;
+        }
         ET_LEFT_MOUSE_DOWN | ET_RIGHT_MOUSE_DOWN => {
+            // SAFETY: borrowed, not owned — the system still owns the event.
+            let cg = ManuallyDrop::new(CGEvent::from_ptr(event as *mut _));
+            spoil(held_mask(cg.get_flags()));
             state::reset();
             return event;
         }
@@ -172,6 +218,8 @@ unsafe extern "C" fn tap_callback(
     if cg.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == SYNTHETIC_MARKER {
         return event;
     }
+
+    spoil(held_mask(cg.get_flags()));
 
     let keycode = cg.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
 
@@ -265,10 +313,10 @@ fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
     if state::shortcut_recording() {
         return false;
     }
-    let Some(sc) = config::parse_shortcut(&state::settings().toggle_shortcut) else {
+    let Some(sc) = state::toggle_shortcut() else {
         return false;
     };
-    let Some(want) = keycode_for(sc.key) else {
+    let Some(want) = sc.key.and_then(keycode_for) else {
         return false;
     };
     if keycode != want {
@@ -278,6 +326,24 @@ fn is_toggle_shortcut(keycode: u16, flags: CGEventFlags) -> bool {
         && flags.contains(CGEventFlags::CGEventFlagControl) == sc.ctrl
         && flags.contains(CGEventFlags::CGEventFlagAlternate) == sc.alt
         && flags.contains(CGEventFlags::CGEventFlagShift) == sc.shift
+}
+
+fn modifier_only_toggle_fired(held: u8) -> bool {
+    if state::shortcut_recording() {
+        return false;
+    }
+    let Some(sc) = state::toggle_shortcut() else {
+        return false;
+    };
+    if sc.key.is_some() {
+        return false;
+    }
+    CHORD.with(|chord| {
+        let mut watch = chord.get();
+        let fired = watch.modifiers(held, sc.modifier_mask());
+        chord.set(watch);
+        fired
+    })
 }
 
 #[rustfmt::skip]
@@ -457,6 +523,12 @@ fn make_key(source: &CGEventSource, keycode: u16, down: bool) -> Option<CGEvent>
     let ev = CGEvent::new_keyboard_event(source.clone(), keycode, down).ok()?;
     ev.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTHETIC_MARKER);
     Some(ev)
+}
+
+pub(super) fn open_accessibility_settings() {
+    crate::update::open_url(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+    );
 }
 
 pub(super) fn request_accessibility_permission(prompt: bool) -> bool {

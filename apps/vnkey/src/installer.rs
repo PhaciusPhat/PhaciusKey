@@ -144,45 +144,6 @@ pub fn relaunch_and_exit(app: &Path) -> ! {
     std::process::exit(0)
 }
 
-pub fn announce_update(from: &str, to: &str, needs_permission: bool) {
-    let mut body =
-        format!("PhaciusKey has been updated from {from} to {to} and restarted automatically.");
-    if needs_permission {
-        body.push_str(
-            "\n\nmacOS needs you to allow Accessibility once more, because this \
-             update changed the app's code-signing identity. Open System Settings → \
-             Privacy & Security → Accessibility and enable PhaciusKey — typing stays \
-             off until then.",
-        );
-    }
-    show_dialog(&body);
-}
-
-pub fn announce(body: &str) {
-    show_dialog(body);
-}
-
-pub fn announce_failure(version: &str, error: &str) {
-    show_dialog(&format!(
-        "PhaciusKey could not install version {version} automatically.\n\n{error}\n\n\
-         The current version keeps working; you can update manually from the menu."
-    ));
-}
-
-fn show_dialog(body: &str) {
-    #[cfg(target_os = "macos")]
-    {
-        let escaped = body.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(
-            "display dialog \"{escaped}\" with title \"PhaciusKey\" buttons {{\"OK\"}} \
-             default button \"OK\" with icon note"
-        );
-        let _ = Command::new("osascript").arg("-e").arg(script).spawn();
-    }
-    #[cfg(not(target_os = "macos"))]
-    eprintln!("[vnkey] {body}");
-}
-
 #[cfg(target_os = "macos")]
 fn run(program: &str, args: &[&str]) -> Result<(), String> {
     let output = Command::new(program)

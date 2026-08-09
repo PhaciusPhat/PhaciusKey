@@ -193,12 +193,13 @@ pub struct Shortcut {
     pub shift: bool,
     pub alt: bool,
     pub cmd: bool,
-    pub key: char,
+    pub key: Option<char>,
 }
 
-/// A combination is one key plus one or two modifiers: two or three keys held
-/// at once. One modifier is the floor because a bare key would fire mid-word.
-const MODIFIERS: std::ops::RangeInclusive<usize> = 1..=2;
+/// A key needs one or two modifiers to escape ordinary typing. Modifiers alone need two,
+/// because a single held modifier occurs constantly while typing.
+const MODIFIERS_WITH_KEY: std::ops::RangeInclusive<usize> = 1..=2;
+const MODIFIERS_ALONE: std::ops::RangeInclusive<usize> = 2..=3;
 
 impl Shortcut {
     fn modifier_count(&self) -> usize {
@@ -209,13 +210,20 @@ impl Shortcut {
     }
 }
 
+fn modifiers_fit(count: usize, key: Option<char>) -> bool {
+    match key {
+        Some(_) => MODIFIERS_WITH_KEY.contains(&count),
+        None => MODIFIERS_ALONE.contains(&count),
+    }
+}
+
 pub fn parse_shortcut(s: &str) -> Option<Shortcut> {
     let mut sc = Shortcut {
         ctrl: false,
         shift: false,
         alt: false,
         cmd: false,
-        key: '\0',
+        key: None,
     };
     let mut tokens = s
         .split('+')
@@ -229,19 +237,19 @@ pub fn parse_shortcut(s: &str) -> Option<Shortcut> {
             "shift" => sc.shift = true,
             "alt" | "option" | "opt" => sc.alt = true,
             "cmd" | "command" | "super" | "meta" => sc.cmd = true,
-            "space" if is_last => sc.key = ' ',
+            "space" if is_last => sc.key = Some(' '),
             key if is_last && key.len() == 1 => {
                 let c = key.chars().next()?;
                 if !c.is_ascii_alphanumeric() {
                     return None;
                 }
-                sc.key = c;
+                sc.key = Some(c);
             }
             _ => return None,
         }
     }
 
-    (sc.key != '\0' && MODIFIERS.contains(&sc.modifier_count())).then_some(sc)
+    modifiers_fit(sc.modifier_count(), sc.key).then_some(sc)
 }
 
 pub fn valid_macro_trigger(trigger: &str) -> bool {
@@ -304,18 +312,22 @@ pub fn shortcut_from_event(
     alt: bool,
     shift: bool,
     cmd: bool,
-    code: &str,
+    code: Option<&str>,
 ) -> Option<String> {
+    let key = match code {
+        Some(code) => Some(match code.as_bytes() {
+            [b'K', b'e', b'y', c] if c.is_ascii_uppercase() => c.to_ascii_lowercase() as char,
+            [b'D', b'i', b'g', b'i', b't', d] if d.is_ascii_digit() => *d as char,
+            _ if code == "Space" => ' ',
+            _ => return None,
+        }),
+        None => None,
+    };
+
     let held = [ctrl, alt, shift, cmd].into_iter().filter(|h| *h).count();
-    if !MODIFIERS.contains(&held) {
+    if !modifiers_fit(held, key) {
         return None;
     }
-    let key = match code.as_bytes() {
-        [b'K', b'e', b'y', c] if c.is_ascii_uppercase() => c.to_ascii_lowercase() as char,
-        [b'D', b'i', b'g', b'i', b't', d] if d.is_ascii_digit() => *d as char,
-        _ if code == "Space" => ' ',
-        _ => return None,
-    };
 
     let mut parts: Vec<&str> = Vec::new();
     for (held, name) in [(ctrl, "ctrl"), (alt, "alt"), (shift, "shift"), (cmd, "cmd")] {
@@ -323,12 +335,16 @@ pub fn shortcut_from_event(
             parts.push(name);
         }
     }
-    let key = if key == ' ' {
-        "space".to_string()
-    } else {
-        key.to_string()
-    };
-    parts.push(&key);
+    let key = key.map(|key| {
+        if key == ' ' {
+            "space".to_string()
+        } else {
+            key.to_string()
+        }
+    });
+    if let Some(key) = &key {
+        parts.push(key);
+    }
     Some(parts.join("+"))
 }
 
@@ -349,11 +365,71 @@ pub fn shortcut_parts(shortcut: &str) -> Vec<String> {
     .map(|(_, glyph)| glyph.to_string())
     .collect();
 
-    parts.push(match sc.key {
-        ' ' => "Space".to_string(),
-        key => key.to_uppercase().to_string(),
-    });
+    if let Some(key) = sc.key {
+        parts.push(match key {
+            ' ' => "Space".to_string(),
+            key => key.to_uppercase().to_string(),
+        });
+    }
     parts
+}
+
+pub const MOD_CTRL: u8 = 1;
+pub const MOD_SHIFT: u8 = 2;
+pub const MOD_ALT: u8 = 4;
+pub const MOD_CMD: u8 = 8;
+
+impl Shortcut {
+    pub fn modifier_mask(&self) -> u8 {
+        (if self.ctrl { MOD_CTRL } else { 0 })
+            | (if self.shift { MOD_SHIFT } else { 0 })
+            | (if self.alt { MOD_ALT } else { 0 })
+            | (if self.cmd { MOD_CMD } else { 0 })
+    }
+}
+
+/// Tracks a modifier-only shortcut across events, which cannot fire on press: the
+/// combination is a prefix of every `⌃⇧X` in every application.
+///
+/// `poisoned` outlives `armed` deliberately. Releasing a third modifier returns the held
+/// set to the target, and without it the gesture would re-arm mid-flight.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ChordWatch {
+    armed: bool,
+    poisoned: bool,
+}
+
+impl ChordWatch {
+    pub const fn new() -> Self {
+        Self {
+            armed: false,
+            poisoned: false,
+        }
+    }
+
+    /// Returns true exactly once per clean gesture, on the release that empties the set.
+    pub fn modifiers(&mut self, held: u8, target: u8) -> bool {
+        if held == 0 {
+            let fired = self.armed;
+            self.armed = false;
+            self.poisoned = false;
+            return fired;
+        }
+        if held & !target != 0 {
+            self.armed = false;
+            self.poisoned = true;
+            return false;
+        }
+        if held == target && !self.poisoned {
+            self.armed = true;
+        }
+        false
+    }
+
+    pub fn interrupted(&mut self, held: u8) {
+        self.armed = false;
+        self.poisoned = held != 0;
+    }
 }
 
 /// The Windows virtual-key code a shortcut's key is delivered as.
@@ -384,7 +460,7 @@ mod tests {
                 shift: true,
                 alt: false,
                 cmd: false,
-                key: 'v'
+                key: Some('v')
             })
         );
     }
@@ -398,7 +474,7 @@ mod tests {
                 shift: false,
                 alt: true,
                 cmd: false,
-                key: ' '
+                key: Some(' ')
             })
         );
         assert_eq!(
@@ -408,7 +484,7 @@ mod tests {
                 shift: false,
                 alt: false,
                 cmd: true,
-                key: '2'
+                key: Some('2')
             })
         );
     }
@@ -417,7 +493,6 @@ mod tests {
     fn rejects_garbage_and_modifierless_keys() {
         assert_eq!(parse_shortcut(""), None);
         assert_eq!(parse_shortcut("v"), None);
-        assert_eq!(parse_shortcut("ctrl+shift"), None);
         assert_eq!(parse_shortcut("ctrl+vv"), None);
         assert_eq!(parse_shortcut("ctrl+ß"), None);
         assert_eq!(parse_shortcut("hyper+v"), None);
@@ -429,6 +504,30 @@ mod tests {
         assert!(parse_shortcut("ctrl+shift+v").is_some());
         assert!(parse_shortcut("ctrl+alt+shift+v").is_none());
         assert!(parse_shortcut("ctrl+alt+shift+cmd+v").is_none());
+    }
+
+    #[test]
+    fn modifiers_alone_need_two_of_them() {
+        assert!(parse_shortcut("ctrl+shift").is_some());
+        assert!(parse_shortcut("ctrl+alt+shift").is_some());
+        assert_eq!(parse_shortcut("shift"), None);
+        assert_eq!(parse_shortcut("ctrl"), None);
+        assert_eq!(parse_shortcut("ctrl+alt+shift+cmd"), None);
+    }
+
+    #[test]
+    fn modifiers_alone_render_as_keycaps() {
+        assert_eq!(shortcut_parts("ctrl+shift"), ["⌃", "⇧"]);
+    }
+
+    #[test]
+    fn a_recorded_release_becomes_a_modifier_only_shortcut() {
+        assert_eq!(
+            shortcut_from_event(true, false, true, false, None).as_deref(),
+            Some("ctrl+shift")
+        );
+        assert_eq!(shortcut_from_event(true, false, false, false, None), None);
+        assert_eq!(shortcut_from_event(true, true, true, true, None), None);
     }
 
     #[test]
@@ -607,15 +706,15 @@ mod tests {
     #[test]
     fn a_recorded_key_press_becomes_a_canonical_shortcut() {
         assert_eq!(
-            shortcut_from_event(true, false, true, false, "KeyV").as_deref(),
+            shortcut_from_event(true, false, true, false, Some("KeyV")).as_deref(),
             Some("ctrl+shift+v")
         );
         assert_eq!(
-            shortcut_from_event(false, false, false, true, "Space").as_deref(),
+            shortcut_from_event(false, false, false, true, Some("Space")).as_deref(),
             Some("cmd+space")
         );
         assert_eq!(
-            shortcut_from_event(false, true, false, false, "Digit1").as_deref(),
+            shortcut_from_event(false, true, false, false, Some("Digit1")).as_deref(),
             Some("alt+1")
         );
     }
@@ -623,7 +722,7 @@ mod tests {
     #[test]
     fn a_recorded_combination_needs_a_modifier() {
         assert_eq!(
-            shortcut_from_event(false, false, false, false, "KeyV"),
+            shortcut_from_event(false, false, false, false, Some("KeyV")),
             None
         );
     }
@@ -631,22 +730,31 @@ mod tests {
     #[test]
     fn a_recorded_combination_stops_at_three_keys() {
         assert_eq!(
-            shortcut_from_event(true, true, false, false, "KeyV").as_deref(),
+            shortcut_from_event(true, true, false, false, Some("KeyV")).as_deref(),
             Some("ctrl+alt+v")
         );
-        assert_eq!(shortcut_from_event(true, true, true, false, "KeyV"), None);
-        assert_eq!(shortcut_from_event(true, true, true, true, "KeyV"), None);
+        assert_eq!(
+            shortcut_from_event(true, true, true, false, Some("KeyV")),
+            None
+        );
+        assert_eq!(
+            shortcut_from_event(true, true, true, true, Some("KeyV")),
+            None
+        );
     }
 
     #[test]
     fn keys_the_hook_cannot_match_are_refused() {
-        assert_eq!(shortcut_from_event(true, false, false, false, "F5"), None);
         assert_eq!(
-            shortcut_from_event(true, false, false, false, "Slash"),
+            shortcut_from_event(true, false, false, false, Some("F5")),
             None
         );
         assert_eq!(
-            shortcut_from_event(true, false, false, false, "Enter"),
+            shortcut_from_event(true, false, false, false, Some("Slash")),
+            None
+        );
+        assert_eq!(
+            shortcut_from_event(true, false, false, false, Some("Enter")),
             None
         );
     }
@@ -663,7 +771,7 @@ mod tests {
         ];
         for code in ["KeyA", "KeyZ", "Digit0", "Digit9", "Space"] {
             for (ctrl, alt, shift, cmd) in combinations {
-                let recorded = shortcut_from_event(ctrl, alt, shift, cmd, code)
+                let recorded = shortcut_from_event(ctrl, alt, shift, cmd, Some(code))
                     .unwrap_or_else(|| panic!("{code} should record"));
                 assert!(
                     parse_shortcut(&recorded).is_some(),
@@ -706,7 +814,7 @@ mod tests {
                 key => format!("ctrl+{key}"),
             };
             let parsed = parse_shortcut(&shortcut).map(|sc| sc.key);
-            assert_eq!(parsed, Some(key), "{shortcut} should parse");
+            assert_eq!(parsed, Some(Some(key)), "{shortcut} should parse");
             assert!(windows_vk(key).is_some(), "{key} has no virtual-key code");
         }
     }
@@ -727,5 +835,83 @@ mod tests {
         settings.macros_enabled = false;
         assert!(settings.to_core(None).macros.is_empty());
         assert_eq!(settings.macros.len(), 1);
+    }
+
+    fn watch_sequence(target: u8, steps: &[u8]) -> usize {
+        let mut watch = ChordWatch::default();
+        steps
+            .iter()
+            .filter(|held| watch.modifiers(**held, target))
+            .count()
+    }
+
+    const CS: u8 = MOD_CTRL | MOD_SHIFT;
+
+    #[test]
+    fn a_clean_hold_and_release_fires_once() {
+        assert_eq!(watch_sequence(CS, &[MOD_CTRL, CS, MOD_CTRL, 0]), 1);
+    }
+
+    #[test]
+    fn either_modifier_may_be_released_first() {
+        assert_eq!(watch_sequence(CS, &[MOD_SHIFT, CS, MOD_SHIFT, 0]), 1);
+    }
+
+    #[test]
+    fn a_third_modifier_spoils_the_gesture_even_once_released() {
+        assert_eq!(
+            watch_sequence(CS, &[MOD_CTRL, CS, CS | MOD_ALT, CS, MOD_CTRL, 0]),
+            0
+        );
+    }
+
+    #[test]
+    fn a_key_pressed_between_spoils_the_gesture() {
+        let mut watch = ChordWatch::default();
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(CS, CS));
+        watch.interrupted(CS);
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(0, CS));
+    }
+
+    /// Typing a plain letter produces no modifier event, so nothing would clear a
+    /// poison set with no modifiers held — and the next gesture would be swallowed.
+    #[test]
+    fn typing_before_a_gesture_does_not_swallow_it() {
+        let mut watch = ChordWatch::default();
+        watch.interrupted(0);
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(CS, CS));
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(
+            watch.modifiers(0, CS),
+            "first gesture after typing should fire"
+        );
+    }
+
+    #[test]
+    fn a_click_while_the_modifiers_are_held_still_spoils_it() {
+        let mut watch = ChordWatch::default();
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(CS, CS));
+        watch.interrupted(CS);
+        assert!(!watch.modifiers(MOD_CTRL, CS));
+        assert!(!watch.modifiers(0, CS), "a click mid-gesture must spoil it");
+    }
+
+    #[test]
+    fn a_partial_hold_never_fires() {
+        assert_eq!(watch_sequence(CS, &[MOD_CTRL, 0]), 0);
+    }
+
+    #[test]
+    fn the_gesture_can_be_repeated() {
+        let mut watch = ChordWatch::default();
+        for _ in 0..2 {
+            assert!(!watch.modifiers(MOD_CTRL, CS));
+            assert!(!watch.modifiers(CS, CS));
+            assert!(watch.modifiers(0, CS));
+        }
     }
 }

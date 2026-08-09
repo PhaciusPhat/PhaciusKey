@@ -54,6 +54,11 @@ pub fn secure_input_active() -> bool {
     }
 }
 
+pub fn open_accessibility_settings() {
+    #[cfg(target_os = "macos")]
+    macos::open_accessibility_settings();
+}
+
 pub fn permission_granted() -> bool {
     #[cfg(target_os = "macos")]
     {
