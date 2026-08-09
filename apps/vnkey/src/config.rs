@@ -402,6 +402,13 @@ pub struct ChordWatch {
 
 #[allow(dead_code)]
 impl ChordWatch {
+    pub const fn new() -> Self {
+        Self {
+            armed: false,
+            poisoned: false,
+        }
+    }
+
     /// Returns true exactly once per clean gesture, on the release that empties the set.
     pub fn modifiers(&mut self, held: u8, target: u8) -> bool {
         if held == 0 {
