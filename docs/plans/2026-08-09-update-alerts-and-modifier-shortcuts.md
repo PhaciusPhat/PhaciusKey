@@ -1728,21 +1728,28 @@ From the spec's Testing section, on macOS:
 
 Record the outcome. If any fails, stop and fix before releasing.
 
-- [ ] **Step 2: Bump the version — in BOTH files**
+- [ ] **Step 2: Bump the version — in THREE files**
 
-`.github/workflows/release.yml` refuses to publish unless the tag matches
-`apps/vnkey/Info.plist`'s `CFBundleShortVersionString` **and** `apps/vnkey/Cargo.toml`'s
-`version`. Bumping only one fails the release after the tag is already pushed.
+`.github/workflows/release.yml` reads the version from `Info.plist` and then refuses
+to publish unless the tag, `Cargo.toml`, **and** the published site all agree. Missing
+any one of them fails the release *after* the tag is already pushed, which means
+deleting and re-pushing the tag to recover.
 
-- `apps/vnkey/Cargo.toml`: `version = "0.0.24"` → `"0.0.25"`
-- `apps/vnkey/Info.plist`: `CFBundleShortVersionString` `0.0.24` → `0.0.25`
+- `apps/vnkey/Info.plist`: `CFBundleShortVersionString` → `0.0.25`
   (leave `CFBundleVersion` at `18`; it has not moved since 0.0.18)
+- `apps/vnkey/Cargo.toml`: `version = "0.0.25"`
+- `docs/_config.yml`: `version: 0.0.25` — the site advertises the download by
+  version, so a stale number here publishes a broken link
 
-Then `cargo check -p vnkey` so `Cargo.lock` updates. Verify before tagging:
+Then `cargo check -p vnkey` so `Cargo.lock` updates.
+
+**Run the workflow's own checks locally before tagging.** Do not tag on hope:
 
 ```sh
-grep '^version' apps/vnkey/Cargo.toml
-/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' apps/vnkey/Info.plist
+V="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' apps/vnkey/Info.plist)"
+C="$(grep -m1 '^version' apps/vnkey/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+S="$(grep -m1 '^version:' docs/_config.yml | sed -E 's/^version:[[:space:]]*//')"
+[ "$V" = "$C" ] && [ "$V" = "$S" ] && echo "ALL MATCH $V" || echo "MISMATCH: $V / $C / $S"
 ```
 
 - [ ] **Step 3: Mark the spec implemented**
