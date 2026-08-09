@@ -174,17 +174,21 @@ fn run(event_loop: EventLoop<UserEvent>) -> ! {
                                 win.hide();
                             }
                         }
+                        Surface::Alert => {}
                     },
                     Some(WindowAction::Drag) => {
                         if let Some(win) = &settings_win {
                             win.drag();
                         }
                     }
-                    Some(WindowAction::Resize(height)) => {
-                        if let Some(panel) = &panel {
-                            panel.set_content_height(f64::from(height), target);
+                    Some(WindowAction::Resize(height)) => match surface {
+                        Surface::Alert => {}
+                        Surface::Panel | Surface::Settings => {
+                            if let Some(panel) = &panel {
+                                panel.set_content_height(f64::from(height), target);
+                            }
                         }
-                    }
+                    },
                     Some(WindowAction::OpenSettings) => {
                         if let Some(panel) = &panel {
                             panel.hide();

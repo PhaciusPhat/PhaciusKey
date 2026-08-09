@@ -164,7 +164,6 @@ fn urlencode(s: &str) -> String {
 
 /// The one button an alert offers besides Done.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Action {
     Accessibility,
     Releases,
@@ -172,7 +171,6 @@ pub enum Action {
 }
 
 impl Action {
-    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             Action::Accessibility => "Open Accessibility",
@@ -182,7 +180,6 @@ impl Action {
     }
 
     /// The interface command the button sends, matching `ui::ipc::Cmd`.
-    #[allow(dead_code)]
     pub fn cmd(self) -> &'static str {
         match self {
             Action::Accessibility => "open_accessibility",
@@ -193,7 +190,6 @@ impl Action {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct Notice {
     pub title: String,
     pub body: String,

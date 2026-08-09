@@ -1,0 +1,15 @@
+/* The update alert. Same theme as the panel; wider, and centred on the screen rather
+   than hung off the menu bar. */
+html, body { height: auto; }
+.surface { position: static; inset: auto; padding: 14px 16px 16px; }
+
+.head { padding: 0 0 6px; }
+.head b { color: var(--ink); font-size: 14px; font-weight: 600; }
+
+.body { margin: 0; font-size: 12.5px; white-space: pre-wrap; }
+
+.warn { margin: 10px 0 0; font-size: 11.5px; padding: 8px 10px; }
+.warn[hidden] { display: none; }
+
+.foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.foot .btn[hidden] { display: none; }

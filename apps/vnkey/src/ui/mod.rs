@@ -1,8 +1,11 @@
+mod alert;
 mod ipc;
 mod panel;
 mod payload;
 mod settings;
 
+#[allow(unused_imports)]
+pub use alert::Alert;
 pub use ipc::{apply_ipc, WindowAction};
 pub use panel::Panel;
 pub use settings::SettingsWindow;
@@ -16,6 +19,8 @@ const THEME: &str = include_str!("assets/theme.css");
 pub enum Surface {
     Panel,
     Settings,
+    #[allow(dead_code)]
+    Alert,
 }
 
 /// Assembles one page from the shared theme and a surface's own parts. Keeping
@@ -49,5 +54,17 @@ mod tests {
         assert!(page.contains(".x{}"), "surface css is missing");
         assert!(page.contains("id=\"body\""), "body is missing");
         assert!(page.contains("var js = 1;"), "script is missing");
+    }
+
+    #[test]
+    fn an_alert_page_carries_the_theme_and_both_parts() {
+        let page = document(
+            include_str!("assets/alert.css"),
+            include_str!("assets/alert.html"),
+            include_str!("assets/alert.js"),
+        );
+        assert!(page.contains("--lacquer"), "theme is missing");
+        assert!(page.contains("id=\"title\""), "title is missing");
+        assert!(page.contains("id=\"action\""), "action button is missing");
     }
 }

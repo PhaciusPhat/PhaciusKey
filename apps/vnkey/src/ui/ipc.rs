@@ -90,6 +90,8 @@ enum Cmd {
     PanelHeight {
         height: u32,
     },
+    OpenAccessibility,
+    OpenReleases,
 }
 
 pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
@@ -154,6 +156,8 @@ pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
         Cmd::OpenSettings => return Some(WindowAction::OpenSettings),
         Cmd::Quit => return Some(WindowAction::Quit),
         Cmd::PanelHeight { height } => return Some(WindowAction::Resize(height)),
+        Cmd::OpenAccessibility => crate::platform::open_accessibility_settings(),
+        Cmd::OpenReleases => update::open_url(&update::releases_url()),
     }
     None
 }
@@ -351,6 +355,8 @@ mod tests {
             r#"{"cmd":"open_settings"}"#,
             r#"{"cmd":"quit"}"#,
             r#"{"cmd":"panel_height","height":312}"#,
+            r#"{"cmd":"open_accessibility"}"#,
+            r#"{"cmd":"open_releases"}"#,
         ] {
             assert!(
                 serde_json::from_str::<Cmd>(msg).is_ok(),
