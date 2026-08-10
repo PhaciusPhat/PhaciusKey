@@ -234,9 +234,10 @@ unsafe extern "C" fn tap_callback(
     // Typing into our own settings window must not file PhaciusKey into the
     // very list of applications the user is curating there.
     let pid = cg.get_integer_value_field(EventField::EVENT_TARGET_UNIX_PROCESS_ID);
-    if pid != i64::from(std::process::id()) {
+    if pid != i64::from(std::process::id()) && LAST_PID.with(Cell::get) != pid {
         if let Some(name) = app_name_for_pid(pid) {
             state::set_current_app(&name);
+            LAST_PID.with(|last| last.set(pid));
         }
     }
 
@@ -370,6 +371,7 @@ fn keycode_for(c: char) -> Option<u16> {
 
 thread_local! {
     static APP_NAMES: RefCell<HashMap<i64, String>> = RefCell::new(HashMap::new());
+    static LAST_PID: Cell<i64> = const { Cell::new(0) };
 }
 
 fn app_name_for_pid(pid: i64) -> Option<String> {
