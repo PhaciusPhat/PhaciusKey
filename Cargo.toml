@@ -8,6 +8,13 @@ resolver = "2"
 # Lints live here rather than on the command line, so a local `cargo clippy`
 # enforces exactly what CI does. Priority matters: the blanket `all` is set
 # highest so the named lints below can override it.
+# The shipped binary is built by `cargo build --release` (scripts/package-app.sh),
+# so the keyboard hook only gets cross-crate inlining if the release profile asks
+# for it here.
+[profile.release]
+lto = true
+codegen-units = 1
+
 [workspace.lints.rust]
 future_incompatible = "warn"
 nonstandard_style = "deny"
