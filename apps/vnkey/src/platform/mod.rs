@@ -59,6 +59,22 @@ pub fn open_accessibility_settings() {
     macos::open_accessibility_settings();
 }
 
+/// The pointer, in the coordinate space the platform lays its displays out in.
+pub fn pointer_position() -> Option<(f64, f64)> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::pointer_position()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows::pointer_position()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
+}
+
 pub fn permission_granted() -> bool {
     #[cfg(target_os = "macos")]
     {

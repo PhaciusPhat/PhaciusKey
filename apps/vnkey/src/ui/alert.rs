@@ -1,12 +1,12 @@
 use std::cell::Cell;
 
 use serde_json::json;
-use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+use tao::dpi::LogicalSize;
 use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use tao::window::{Window, WindowBuilder};
 use wry::WebView;
 
-use super::panel::Rect;
+use super::screen::{Rect, Screen};
 use super::Surface;
 use crate::update::Notice;
 use crate::UserEvent;
@@ -18,10 +18,10 @@ const SCRIPT: &str = include_str!("assets/alert.js");
 const WIDTH: f64 = 380.0;
 const INITIAL_HEIGHT: f64 = 160.0;
 
-fn centre_origin(size: PhysicalSize<u32>, monitor_area: Rect) -> PhysicalPosition<i32> {
-    let x = monitor_area.x + (monitor_area.width - f64::from(size.width)) / 2.0;
-    let y = monitor_area.y + (monitor_area.height - f64::from(size.height)) / 2.0;
-    PhysicalPosition::new(x.round() as i32, y.round() as i32)
+fn centre_origin(size: (f64, f64), monitor_area: Rect) -> (f64, f64) {
+    let x = monitor_area.x + (monitor_area.width - size.0) / 2.0;
+    let y = monitor_area.y + (monitor_area.height - size.1) / 2.0;
+    (x, y)
 }
 
 fn notice_json(notice: &Notice) -> String {
@@ -100,23 +100,12 @@ impl Alert {
         let Some(monitor) = target.primary_monitor() else {
             return;
         };
-        let scale = monitor.scale_factor();
-        let size = PhysicalSize::new(
-            (WIDTH * scale).round() as u32,
-            (self.height.get() * scale).round() as u32,
-        );
-        let position = monitor.position();
-        let monitor_size = monitor.size();
-        let monitor_area = Rect {
-            x: f64::from(position.x),
-            y: f64::from(position.y),
-            width: f64::from(monitor_size.width),
-            height: f64::from(monitor_size.height),
-        };
+        let (screen, monitor_area) = Screen::of(&monitor);
+        let (width, height) = screen.size_from_logical(WIDTH, self.height.get());
+        let (x, y) = centre_origin((width, height), monitor_area);
 
-        self.window.set_inner_size(size);
-        self.window
-            .set_outer_position(centre_origin(size, monitor_area));
+        self.window.set_inner_size(screen.size(width, height));
+        self.window.set_outer_position(screen.position(x, y));
     }
 }
 
@@ -133,9 +122,9 @@ mod tests {
 
     #[test]
     fn it_centres_on_the_work_area() {
-        let origin = centre_origin(PhysicalSize::new(400, 200), SCREEN);
-        assert_eq!(origin.x, 400);
-        assert_eq!(origin.y, 300);
+        let (x, y) = centre_origin((400.0, 200.0), SCREEN);
+        assert_eq!(x, 400.0);
+        assert_eq!(y, 300.0);
     }
 
     #[test]
@@ -146,8 +135,8 @@ mod tests {
             width: 1920.0,
             height: 1080.0,
         };
-        let origin = centre_origin(PhysicalSize::new(400, 200), screen);
-        assert_eq!(origin.x, -1160);
-        assert_eq!(origin.y, -640);
+        let (x, y) = centre_origin((400.0, 200.0), screen);
+        assert_eq!(x, -1160.0);
+        assert_eq!(y, -640.0);
     }
 }
