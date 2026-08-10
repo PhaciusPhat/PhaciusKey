@@ -7,9 +7,9 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::WebView;
 
 use super::payload::state_json;
-use super::screen::{Rect, Screen};
+use super::screen::{active_monitor, Rect, Screen};
 use super::Surface;
-use crate::{platform, state, UserEvent};
+use crate::{state, UserEvent};
 
 const CSS: &str = include_str!("assets/panel.css");
 const BODY: &str = include_str!("assets/panel.html");
@@ -59,10 +59,7 @@ fn panel_origin(icon: Rect, panel: (f64, f64), work_area: Rect) -> (f64, f64) {
 /// platform reports the pointer already in that space, so it is what names the
 /// display.
 fn anchor(icon: tray_icon::Rect, target: &EventLoopWindowTarget<UserEvent>) -> Rect {
-    let scale = platform::pointer_position()
-        .and_then(|(x, y)| target.monitor_from_point(x, y))
-        .or_else(|| target.primary_monitor())
-        .map_or(1.0, |monitor| monitor.scale_factor());
+    let scale = active_monitor(target).map_or(1.0, |monitor| monitor.scale_factor());
 
     Screen::new(scale).rect_from_pixels(Rect {
         x: icon.position.x,
