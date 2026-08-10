@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::types::Tone;
 
 /// Whether `syllable` (lowercased, NFC) is a legal Vietnamese syllable.
@@ -5,8 +7,7 @@ pub fn is_valid_syllable(syllable: &str) -> bool {
     if syllable.is_empty() {
         return false;
     }
-    let bare = strip_tone_marks(syllable);
-    let s = bare.to_lowercase();
+    let s = bare_lowercase(syllable);
 
     let valid = onset_splits(&s).any(|(onset, rest)| match parse_rime(rest) {
         Some((nucleus, coda)) => validate_combination(onset, nucleus, coda),
@@ -27,12 +28,11 @@ pub fn is_valid_prefix(s: &str) -> bool {
     if s.is_empty() {
         return true;
     }
-    let bare = strip_tone_marks(s);
-    let s = bare.to_lowercase();
+    let s = bare_lowercase(s);
 
     if ONSETS
         .iter()
-        .any(|o| o.chars().count() > s.chars().count() && o.starts_with(&s))
+        .any(|o| o.chars().count() > s.chars().count() && o.starts_with(&*s))
     {
         return true;
     }
@@ -48,25 +48,22 @@ pub fn is_valid_prefix(s: &str) -> bool {
 
 fn is_valid_rime_prefix(rest: &str) -> bool {
     let mut vowels = 0usize;
-    let mut coda = String::new();
 
-    for ch in rest.chars() {
-        if coda.is_empty() && is_vowel_char(ch) {
+    for (i, ch) in rest.char_indices() {
+        if is_vowel_char(ch) {
             vowels += 1;
             if vowels > 3 {
                 return false;
             }
-        } else if is_coda_char(ch) {
-            coda.push(ch);
-            if !CODAS.iter().any(|c| c.starts_with(&coda)) {
-                return false;
-            }
-        } else {
-            return false;
+            continue;
         }
+        let coda = &rest[i..];
+        return vowels != 0
+            && coda.chars().all(is_coda_char)
+            && CODAS.iter().any(|c| c.starts_with(coda));
     }
 
-    vowels != 0 || coda.is_empty()
+    true
 }
 
 /// Whether `tone` may occur on a syllable ending in `coda`; stop codas take only sắc or nặng.
@@ -80,17 +77,34 @@ pub fn tone_allowed_with_coda(tone: Tone, coda: &str) -> bool {
 
 /// The coda of `syllable`, if it has one; tone marks are stripped first.
 pub fn coda_of(syllable: &str) -> &'static str {
-    let bare = strip_tone_marks(syllable).to_lowercase();
     for coda in CODAS {
-        if bare.ends_with(coda) {
+        let Some(start) = syllable.len().checked_sub(coda.len()) else {
+            continue;
+        };
+        // Every coda is ASCII, so a tail that matches one cannot straddle a
+        // multi-byte character; the boundary check only rejects, never truncates.
+        if syllable.is_char_boundary(start) && syllable[start..].eq_ignore_ascii_case(coda) {
             return coda;
         }
     }
     ""
 }
 
-pub fn strip_tone_marks(s: &str) -> String {
-    s.chars().map(|c| base_vowel(c).unwrap_or(c)).collect()
+/// Tone marks removed and lowercased, borrowing when that changes nothing.
+fn bare_lowercase(s: &str) -> Cow<'_, str> {
+    let unchanged = s.chars().all(|c| {
+        let mut lower = base_vowel(c).unwrap_or(c).to_lowercase();
+        lower.next() == Some(c) && lower.next().is_none()
+    });
+    if unchanged {
+        return Cow::Borrowed(s);
+    }
+
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        out.extend(base_vowel(c).unwrap_or(c).to_lowercase());
+    }
+    Cow::Owned(out)
 }
 
 /// Map a toned/diacritical vowel to its base form.

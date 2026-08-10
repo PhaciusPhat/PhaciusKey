@@ -1,22 +1,25 @@
+use std::borrow::Cow;
+
 use crate::types::{Tone, TonePlacementMode};
 use crate::validator::base_vowel;
 
 /// Apply `tone` to `word` (a bare syllable, no existing tone marks).
-pub fn apply_tone(word: &str, tone: Tone, mode: TonePlacementMode) -> String {
+pub fn apply_tone(word: &str, tone: Tone, mode: TonePlacementMode) -> Cow<'_, str> {
     if tone == Tone::Flat {
-        return word.to_string();
+        return Cow::Borrowed(word);
     }
 
     let chars: Vec<char> = word.chars().collect();
 
-    if let Some(idx) = tone_position(&chars, mode) {
-        chars
-            .iter()
-            .enumerate()
-            .map(|(i, &c)| if i == idx { toned_vowel(c, tone) } else { c })
-            .collect()
-    } else {
-        word.to_string()
+    match tone_position(&chars, mode) {
+        Some(idx) => Cow::Owned(
+            chars
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| if i == idx { toned_vowel(c, tone) } else { c })
+                .collect(),
+        ),
+        None => Cow::Borrowed(word),
     }
 }
 
@@ -40,13 +43,13 @@ fn tone_position(chars: &[char], mode: TonePlacementMode) -> Option<usize> {
         vowel_indices.retain(|&i| i != 1);
     }
 
-    {
-        let s: String = chars.iter().collect();
-        if s.contains("ươ") || s.contains("ưo") {
-            for &vi in &vowel_indices {
-                if matches!(chars[vi], 'ơ' | 'ô') {
-                    return Some(vi);
-                }
+    let horn_cluster = chars
+        .windows(2)
+        .any(|w| w[0] == 'ư' && matches!(w[1], 'ơ' | 'o'));
+    if horn_cluster {
+        for &vi in &vowel_indices {
+            if matches!(chars[vi], 'ơ' | 'ô') {
+                return Some(vi);
             }
         }
     }
@@ -70,10 +73,10 @@ fn modern_position(
     _chars: &[char],
 ) -> Option<usize> {
     if let Some(cs) = coda_start {
-        let before_coda: Vec<usize> = vowel_indices.iter().copied().filter(|&i| i < cs).collect();
-        return before_coda
-            .last()
+        return vowel_indices
+            .iter()
             .copied()
+            .rfind(|&i| i < cs)
             .or_else(|| vowel_indices.last().copied());
     }
 
@@ -105,10 +108,12 @@ fn classic_position(
 
 fn coda_start_index(chars: &[char]) -> Option<usize> {
     const CODAS: &[&str] = &["ng", "nh", "ch", "c", "m", "n", "p", "t"];
-    let s: String = chars.iter().collect();
     for coda in CODAS {
-        if s.ends_with(coda) {
-            return Some(chars.len() - coda.chars().count());
+        let Some(start) = chars.len().checked_sub(coda.chars().count()) else {
+            continue;
+        };
+        if chars[start..].iter().copied().eq(coda.chars()) {
+            return Some(start);
         }
     }
     None
@@ -227,7 +232,7 @@ mod tests {
     use crate::types::{Tone, TonePlacementMode};
 
     fn modern(word: &str, tone: Tone) -> String {
-        apply_tone(word, tone, TonePlacementMode::Modern)
+        apply_tone(word, tone, TonePlacementMode::Modern).into_owned()
     }
 
     #[test]

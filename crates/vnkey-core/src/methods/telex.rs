@@ -35,7 +35,6 @@ struct TelexState {
     is_foreign: bool,
     tone_applied: bool,
     cancelled: bool,
-    raw: String,
     mask: Vec<bool>,
     // OpenKey STANDALONE_MASK.
     standalone_w: Option<usize>,
@@ -52,7 +51,6 @@ impl TelexState {
     }
 
     fn push_key(&mut self, ch: char) {
-        self.raw.push(ch);
         let lower = ch.to_lowercase().next().unwrap_or(ch);
 
         if self.quick_telex_enabled {
@@ -158,7 +156,10 @@ impl TelexState {
     fn finish(self) -> MethodResult {
         let literal = self.cancelled.then(|| self.syllable.clone());
         MethodResult {
-            bare: self.syllable.replace("ưo", "ươ"),
+            bare: match self.syllable.find("ưo") {
+                Some(_) => self.syllable.replace("ưo", "ươ"),
+                None => self.syllable,
+            },
             tone: self.tone,
             is_foreign: self.is_foreign,
             literal,

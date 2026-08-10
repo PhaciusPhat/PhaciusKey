@@ -4,6 +4,8 @@ pub mod vni;
 pub use telex::TelexMethod;
 pub use vni::VniMethod;
 
+use std::borrow::Cow;
+
 use crate::types::{Config, Tone};
 
 /// Result of processing the raw buffer through an input method.
@@ -22,20 +24,20 @@ pub struct MethodResult {
 }
 
 /// Re-apply a typed-case mask to a composed (lowercase) string.
-pub fn apply_case_mask(text: &str, mask: &[bool]) -> String {
-    text.chars()
-        .enumerate()
-        .flat_map(|(i, c)| {
-            let upper = mask.get(i).copied().unwrap_or(false);
-            let mut out = Vec::new();
-            if upper {
-                out.extend(c.to_uppercase());
-            } else {
-                out.push(c);
-            }
-            out
-        })
-        .collect()
+pub fn apply_case_mask<'a>(text: &'a str, mask: &[bool]) -> Cow<'a, str> {
+    if !mask.iter().any(|&upper| upper) {
+        return Cow::Borrowed(text);
+    }
+
+    let mut out = String::with_capacity(text.len());
+    for (i, c) in text.chars().enumerate() {
+        if mask.get(i).copied().unwrap_or(false) {
+            out.extend(c.to_uppercase());
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
 }
 
 pub trait InputMethodProcessor {

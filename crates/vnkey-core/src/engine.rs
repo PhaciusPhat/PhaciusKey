@@ -108,10 +108,16 @@ impl Engine {
     }
 
     fn recompute(&mut self) -> Vec<EditAction> {
-        let raw = self.buffer.raw.clone();
+        let raw = std::mem::take(&mut self.buffer.raw);
+        let actions = self.recompute_from(&raw);
+        self.buffer.raw = raw;
+        actions
+    }
+
+    fn recompute_from(&mut self, raw: &str) -> Vec<EditAction> {
         let result = match self.config.method {
-            InputMethod::Telex => TelexMethod.process(&raw, &self.config),
-            InputMethod::Vni => VniMethod.process(&raw, &self.config),
+            InputMethod::Telex => TelexMethod.process(raw, &self.config),
+            InputMethod::Vni => VniMethod.process(raw, &self.config),
         };
 
         let method_result = match result {
@@ -131,7 +137,7 @@ impl Engine {
         }
 
         if self.passthrough {
-            return self.show(&raw);
+            return self.show(raw);
         }
 
         if let Some(literal) = &method_result.literal {
