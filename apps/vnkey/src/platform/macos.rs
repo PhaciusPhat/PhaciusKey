@@ -78,6 +78,14 @@ pub(super) fn secure_input_active() -> bool {
     unsafe { IsSecureEventInputEnabled() }
 }
 
+/// The pointer, in the points `CGDisplayBounds` lays the displays out in: the
+/// origin is the top left of the main display and y grows downwards.
+pub(super) fn pointer_position() -> Option<(f64, f64)> {
+    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState).ok()?;
+    let location = CGEvent::new(source).ok()?.location();
+    Some((location.x, location.y))
+}
+
 extern "C" {
     fn proc_pidpath(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
 }

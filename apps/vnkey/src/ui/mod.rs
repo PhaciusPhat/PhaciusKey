@@ -2,6 +2,7 @@ mod alert;
 mod ipc;
 mod panel;
 mod payload;
+mod screen;
 mod settings;
 
 pub use alert::Alert;
