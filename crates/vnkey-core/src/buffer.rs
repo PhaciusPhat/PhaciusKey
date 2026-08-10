@@ -28,38 +28,43 @@ impl CompositionBuffer {
 
     /// Minimal edit actions from `self.displayed` to `target`, which then becomes `self.displayed`.
     pub fn diff_to(&mut self, target: &str) -> Vec<EditAction> {
+        let mut common_bytes = 0;
+        let mut common_chars = 0;
+        for (a, b) in self.displayed.chars().zip(target.chars()) {
+            if a != b {
+                break;
+            }
+            common_bytes += a.len_utf8();
+            common_chars += 1;
+        }
+
         let mut actions = Vec::new();
+        push_backspaces(&mut actions, self.displayed.chars().count() - common_chars);
 
-        let common: usize = self
-            .displayed
-            .chars()
-            .zip(target.chars())
-            .take_while(|(a, b)| a == b)
-            .count();
-
-        let target_tail: String = target.chars().skip(common).collect();
-
-        let to_delete = self.displayed.chars().count() - common;
-        if to_delete > 0 {
-            actions.push(EditAction::Backspace(to_delete as u8));
-        }
-        if !target_tail.is_empty() {
-            actions.push(EditAction::Insert(target_tail));
+        let tail = &target[common_bytes..];
+        if !tail.is_empty() {
+            actions.push(EditAction::Insert(tail.to_string()));
         }
 
-        self.displayed = target.to_string();
+        self.displayed.clear();
+        self.displayed.push_str(target);
         actions
     }
 
     /// Actions to clear everything currently displayed, then reset.
     pub fn clear_actions(&mut self) -> Vec<EditAction> {
-        let len = self.displayed.chars().count();
         let mut actions = Vec::new();
-        if len > 0 {
-            actions.push(EditAction::Backspace(len as u8));
-        }
+        push_backspaces(&mut actions, self.displayed.chars().count());
         self.reset();
         actions
+    }
+}
+
+fn push_backspaces(actions: &mut Vec<EditAction>, mut count: usize) {
+    while count > 0 {
+        let chunk = count.min(usize::from(u8::MAX));
+        actions.push(EditAction::Backspace(chunk as u8));
+        count -= chunk;
     }
 }
 
@@ -85,6 +90,23 @@ mod tests {
         };
         let actions = buf.diff_to("hà");
         assert_eq!(actions, vec![EditAction::Insert("à".into())]);
+    }
+
+    #[test]
+    fn a_diff_past_the_backspace_ceiling_still_deletes_every_character() {
+        let mut buf = CompositionBuffer {
+            raw: String::new(),
+            displayed: "a".repeat(300),
+        };
+        let actions = buf.diff_to("b");
+        let deleted: usize = actions
+            .iter()
+            .map(|a| match a {
+                EditAction::Backspace(n) => usize::from(*n),
+                EditAction::Insert(_) => 0,
+            })
+            .sum();
+        assert_eq!(deleted, 300);
     }
 
     #[test]
