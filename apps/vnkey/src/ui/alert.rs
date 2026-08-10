@@ -6,7 +6,7 @@ use tao::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use tao::window::{Window, WindowBuilder};
 use wry::WebView;
 
-use super::screen::{Rect, Screen};
+use super::screen::{centre_origin, Screen};
 use super::Surface;
 use crate::update::Notice;
 use crate::UserEvent;
@@ -17,12 +17,6 @@ const SCRIPT: &str = include_str!("assets/alert.js");
 
 const WIDTH: f64 = 380.0;
 const INITIAL_HEIGHT: f64 = 160.0;
-
-fn centre_origin(size: (f64, f64), monitor_area: Rect) -> (f64, f64) {
-    let x = monitor_area.x + (monitor_area.width - size.0) / 2.0;
-    let y = monitor_area.y + (monitor_area.height - size.1) / 2.0;
-    (x, y)
-}
 
 fn notice_json(notice: &Notice) -> String {
     json!({
@@ -106,37 +100,5 @@ impl Alert {
 
         self.window.set_inner_size(screen.size(width, height));
         self.window.set_outer_position(screen.position(x, y));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SCREEN: Rect = Rect {
-        x: 100.0,
-        y: 0.0,
-        width: 1000.0,
-        height: 800.0,
-    };
-
-    #[test]
-    fn it_centres_on_the_work_area() {
-        let (x, y) = centre_origin((400.0, 200.0), SCREEN);
-        assert_eq!(x, 400.0);
-        assert_eq!(y, 300.0);
-    }
-
-    #[test]
-    fn it_centres_on_a_work_area_that_does_not_start_at_zero() {
-        let screen = Rect {
-            x: -1920.0,
-            y: -1080.0,
-            width: 1920.0,
-            height: 1080.0,
-        };
-        let (x, y) = centre_origin((400.0, 200.0), screen);
-        assert_eq!(x, -1160.0);
-        assert_eq!(y, -640.0);
     }
 }

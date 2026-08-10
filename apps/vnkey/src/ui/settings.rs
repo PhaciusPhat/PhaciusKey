@@ -6,6 +6,7 @@ use tao::window::{Window, WindowBuilder, WindowId};
 use wry::WebView;
 
 use super::payload::state_json;
+use super::screen::{active_monitor, centre_origin, Screen};
 use super::Surface;
 use crate::{platform, state, UserEvent};
 
@@ -60,10 +61,27 @@ impl SettingsWindow {
         self.window.id()
     }
 
-    pub fn show(&self) {
+    pub fn show(&self, target: &EventLoopWindowTarget<UserEvent>) {
         *self.installed_apps.borrow_mut() = platform::installed_apps();
+        // Only on the way out of hidden, so that reopening settings from the
+        // tray does not drag a window the user has already placed.
+        if !self.window.is_visible() {
+            self.place(target);
+        }
         self.window.set_visible(true);
         self.window.set_focus();
+    }
+
+    fn place(&self, target: &EventLoopWindowTarget<UserEvent>) {
+        let Some(monitor) = active_monitor(target) else {
+            return;
+        };
+        let (screen, area) = Screen::of(&monitor);
+        let (width, height) = screen.size_from_logical(SIZE.width, SIZE.height);
+        let (x, y) = centre_origin((width, height), area);
+
+        self.window.set_inner_size(screen.size(width, height));
+        self.window.set_outer_position(screen.position(x, y));
     }
 
     pub fn hide(&self) {

@@ -1,5 +1,8 @@
 use tao::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize, Position, Size};
+use tao::event_loop::EventLoopWindowTarget;
 use tao::monitor::MonitorHandle;
+
+use crate::UserEvent;
 
 /// A rectangle with y growing downwards.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -101,6 +104,22 @@ impl Screen {
     }
 }
 
+/// The display the pointer is on, which is the one the user is working on: it
+/// is what macOS moves the menu bar to and what Windows opens a menu on.
+pub fn active_monitor(target: &EventLoopWindowTarget<UserEvent>) -> Option<MonitorHandle> {
+    crate::platform::pointer_position()
+        .and_then(|(x, y)| target.monitor_from_point(x, y))
+        .or_else(|| target.primary_monitor())
+}
+
+/// Where to put a window of `size` so it sits in the middle of `area`, in
+/// whatever units the two share.
+pub fn centre_origin(size: (f64, f64), area: Rect) -> (f64, f64) {
+    let x = area.x + (area.width - size.0) / 2.0;
+    let y = area.y + (area.height - size.1) / 2.0;
+    (x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,5 +186,27 @@ mod tests {
             pixels(2.0).position(10.0, 20.0),
             Position::Physical(_)
         ));
+    }
+
+    #[test]
+    fn it_centres_on_the_area() {
+        let area = Rect {
+            x: 100.0,
+            y: 0.0,
+            width: 1000.0,
+            height: 800.0,
+        };
+        assert_eq!(centre_origin((400.0, 200.0), area), (400.0, 300.0));
+    }
+
+    #[test]
+    fn it_centres_on_an_area_that_does_not_start_at_zero() {
+        let area = Rect {
+            x: -1920.0,
+            y: -1080.0,
+            width: 1920.0,
+            height: 1080.0,
+        };
+        assert_eq!(centre_origin((400.0, 200.0), area), (-1160.0, -640.0));
     }
 }

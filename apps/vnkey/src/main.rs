@@ -150,7 +150,7 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
                 if std::env::args().any(|a| a == "--settings-window") {
                     match SettingsWindow::new(target, proxy.clone()) {
                         Ok(win) => {
-                            win.show();
+                            win.show(target);
                             settings_win = Some(win);
                         }
                         Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
@@ -366,10 +366,10 @@ fn open_settings(
     proxy: &EventLoopProxy<UserEvent>,
 ) {
     match settings_win {
-        Some(win) => win.show(),
+        Some(win) => win.show(target),
         None => match SettingsWindow::new(target, proxy.clone()) {
             Ok(win) => {
-                win.show();
+                win.show(target);
                 *settings_win = Some(win);
             }
             Err(e) => eprintln!("[vnkey] failed to open settings: {e}"),
