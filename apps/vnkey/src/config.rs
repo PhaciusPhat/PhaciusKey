@@ -123,16 +123,22 @@ impl Settings {
 
     pub fn save(&self) {
         let path = Self::config_path();
+        let text = match toml::to_string_pretty(self) {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("[vnkey] failed to serialize settings: {e}");
+                return;
+            }
+        };
+
+        if std::fs::write(&path, &text).is_ok() {
+            return;
+        }
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        match toml::to_string_pretty(self) {
-            Ok(text) => {
-                if let Err(e) = std::fs::write(&path, text) {
-                    eprintln!("[vnkey] failed to save settings to {}: {e}", path.display());
-                }
-            }
-            Err(e) => eprintln!("[vnkey] failed to serialize settings: {e}"),
+        if let Err(e) = std::fs::write(&path, &text) {
+            eprintln!("[vnkey] failed to save settings to {}: {e}", path.display());
         }
     }
 

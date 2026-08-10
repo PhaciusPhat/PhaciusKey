@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use vnkey_core::{EditAction, Engine, Keystroke};
@@ -167,18 +167,48 @@ pub fn settings() -> Settings {
     with(|s| s.settings.clone()).unwrap_or_default()
 }
 
-pub fn update(f: impl FnOnce(&mut Settings)) -> Settings {
+/// Bumped under the shell lock, so a snapshot's version orders it against every other.
+static SETTINGS_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// The highest version written to disk, guarding the write itself.
+static SAVED_VERSION: Mutex<u64> = Mutex::new(0);
+
+/// Persist a snapshot taken under the shell lock, without holding that lock: the
+/// keyboard hook acquires it on every keystroke and `save` blocks on the filesystem.
+/// An older snapshot losing a race is dropped rather than written over a newer one.
+fn save_settings(settings: &Settings, version: u64) {
+    let Ok(mut saved) = SAVED_VERSION.lock() else {
+        return;
+    };
+    if version <= *saved {
+        return;
+    }
+    settings.save();
+    *saved = version;
+}
+
+/// Mutate the shell under its lock, then save and notify outside it.
+fn mutate(f: impl FnOnce(&mut Shell)) -> Settings {
     let updated = with(|s| {
+        f(s);
+        let version = SETTINGS_VERSION.fetch_add(1, Ordering::Relaxed) + 1;
+        (s.settings.clone(), version)
+    });
+
+    if let Some((settings, version)) = &updated {
+        save_settings(settings, *version);
+    }
+    notify();
+    updated.map(|(settings, _)| settings).unwrap_or_default()
+}
+
+pub fn update(f: impl FnOnce(&mut Settings)) -> Settings {
+    mutate(|s| {
         f(&mut s.settings);
         cache_toggle(&s.settings);
         s.app_override = None;
         s.apply_config();
-        s.settings.save();
-        s.settings.clone()
     })
-    .unwrap_or_default();
-    notify();
-    updated
 }
 
 /// The state the toggle shortcut leaves behind.
@@ -207,7 +237,7 @@ fn toggled(enabled: bool, excluded_here: bool, app_override: Option<bool>) -> To
 }
 
 pub fn toggle_vietnamese() -> Settings {
-    let updated = with(|s| {
+    mutate(|s| {
         let next = toggled(
             s.settings.enabled,
             s.settings.excluded_for(s.current_app.as_deref()),
@@ -217,12 +247,7 @@ pub fn toggle_vietnamese() -> Settings {
         s.app_override = next.app_override;
         s.apply_config();
         s.engine.reset();
-        s.settings.save();
-        s.settings.clone()
     })
-    .unwrap_or_default();
-    notify();
-    updated
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
