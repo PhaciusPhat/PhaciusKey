@@ -57,7 +57,7 @@ pub fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[Str
         "macros_enabled": s.macros_enabled,
         "current_app": current_app,
         "secure_input": crate::platform::secure_input_active(),
-        "excluded_here": s.excluded_for(current_app),
+        "excluded_here": state::exclusion_in_effect(),
         "excluded_apps": s.disabled_apps,
         "excluded_summary": excluded_summary(s.disabled_apps.len()),
         "suggestions": suggestions(installed_apps, current_app),

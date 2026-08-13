@@ -11,11 +11,15 @@ struct Screen {
 
 impl Screen {
     fn new(method: InputMethod) -> Self {
+        Self::with(Config {
+            method,
+            ..Default::default()
+        })
+    }
+
+    fn with(config: Config) -> Self {
         Self {
-            engine: Engine::new(Config {
-                method,
-                ..Default::default()
-            }),
+            engine: Engine::new(config),
             text: String::new(),
         }
     }
@@ -50,6 +54,10 @@ impl Screen {
 
 fn typed(method: InputMethod, s: &str) -> String {
     Screen::new(method).type_str(s).to_string()
+}
+
+fn typed_with(config: Config, s: &str) -> String {
+    Screen::with(config).type_str(s).to_string()
 }
 
 #[test]
@@ -89,6 +97,82 @@ fn no_keystroke_disappears_mid_sentence() {
             }
         }
     }
+}
+
+/// A word the engine has given up on reads back exactly as it was typed, which
+/// is what lets an English word through whole.
+#[test]
+fn a_restored_word_reads_back_key_for_key() {
+    for sequence in [
+        "error", "hurry", "sorry", "carry", "arrow", "mirror", "possible", "address", "dorrs",
+        "hassf", "toanssf",
+    ] {
+        assert_eq!(typed(InputMethod::Telex, sequence), sequence);
+    }
+}
+
+/// Pressing a tone key twice removes the tone and types the key. A third press
+/// types one more character, rather than also putting back the press the tone
+/// rule spent.
+#[test]
+fn a_third_tone_key_types_one_character() {
+    assert_eq!(typed(InputMethod::Telex, "dorr"), "dor");
+    assert_eq!(typed(InputMethod::Telex, "dorrr"), "dorr");
+    assert_eq!(typed(InputMethod::Telex, "dorrrr"), "dorrr");
+    assert_eq!(typed(InputMethod::Vni, "do33"), "do3");
+    assert_eq!(typed(InputMethod::Vni, "do333"), "do33");
+}
+
+/// A key that follows an undone diacritic still reaches the screen: the word is
+/// literal from then on, so the key types itself.
+#[test]
+fn a_key_after_an_undone_diacritic_is_not_swallowed() {
+    assert_eq!(typed(InputMethod::Telex, "aaas"), "aas");
+    assert_eq!(typed(InputMethod::Telex, "aaaf"), "aaf");
+}
+
+const ADDRESSES: &[&str] = &[
+    "phacius2001@gmail.com",
+    "hoa2@gmail.com",
+    "an1@x.com",
+    "toan5@gmail.com",
+    "nguyen1998@gmail.com",
+    "phat.le@mesoneer.io",
+    "user+tag@sub.domain.org",
+];
+
+#[test]
+fn an_email_address_survives_being_typed() {
+    for method in [InputMethod::Vni, InputMethod::Telex] {
+        for address in ADDRESSES {
+            assert_eq!(typed(method, address), *address, "{method:?}: {address:?}");
+        }
+    }
+}
+
+/// Auto-restore is a guess about English words, so it can be switched off. An
+/// `@` is not a guess: a VNI tone digit typed before it belongs to an address,
+/// and no tone reaches the domain that follows.
+#[test]
+fn a_tone_digit_never_crosses_an_at_sign() {
+    for address in ADDRESSES {
+        let config = Config {
+            method: InputMethod::Vni,
+            auto_restore: false,
+            ..Default::default()
+        };
+        assert_eq!(typed_with(config, address), *address, "{address:?}");
+    }
+}
+
+/// The tone a word already earned is not taken away by the punctuation that
+/// ends it.
+#[test]
+fn punctuation_keeps_the_tone_it_follows() {
+    assert_eq!(typed(InputMethod::Telex, "chaof."), "chào.");
+    assert_eq!(typed(InputMethod::Telex, "chaof,"), "chào,");
+    assert_eq!(typed(InputMethod::Telex, "chaof-em"), "chào-em");
+    assert_eq!(typed(InputMethod::Vni, "chao2."), "chào.");
 }
 
 /// Every printable key must leave something behind, whatever precedes it.

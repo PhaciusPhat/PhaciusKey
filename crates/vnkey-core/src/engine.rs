@@ -54,6 +54,11 @@ impl Engine {
         let ch = key.ch;
 
         if is_word_boundary(ch) {
+            if proves_not_vietnamese(ch) {
+                let mut actions = self.restore_raw();
+                actions.extend(self.commit_and_reset(Some(ch), false));
+                return actions;
+            }
             return self.commit_and_reset(Some(ch), true);
         }
 
@@ -128,6 +133,12 @@ impl Engine {
         }
 
         if self.passthrough {
+            if was_passthrough {
+                if let Some(ch) = repeated_tail(&raw) {
+                    self.buffer.displayed.push(ch);
+                    return vec![EditAction::Insert(ch.to_string())];
+                }
+            }
             let text = match &method_result.literal {
                 Some(literal) if !was_passthrough && !method_result.is_foreign => {
                     apply_case_mask(literal, &method_result.case_mask)
@@ -384,32 +395,28 @@ fn is_vowel(ch: char) -> bool {
     )
 }
 
+/// The key just typed, when it repeats the one before it. No word in either
+/// language triples a letter, so a third identical press asks for that
+/// character and not for the keys a tone rule spent earlier.
+fn repeated_tail(raw: &str) -> Option<char> {
+    let mut tail = raw.chars().rev();
+    let last = tail.next()?;
+    (tail.next()? == last).then_some(last)
+}
+
+/// A Vietnamese word is letters, and VNI spells its tones with digits, so
+/// anything else closes the word.
 fn is_word_boundary(ch: char) -> bool {
+    !ch.is_alphanumeric()
+}
+
+/// None of these can stand inside Vietnamese text, so a word they close is an
+/// address or an identifier: it goes back on screen as the keys that were typed,
+/// tone rules and all.
+fn proves_not_vietnamese(ch: char) -> bool {
     matches!(
         ch,
-        ' ' | '\t'
-            | '\n'
-            | '\r'
-            | '.'
-            | ','
-            | '!'
-            | '?'
-            | ';'
-            | ':'
-            | '('
-            | ')'
-            | '['
-            | ']'
-            | '{'
-            | '}'
-            | '"'
-            | '\''
-            | '`'
-            | '/'
-            | '\\'
-            | '|'
-            | '-'
-            | '_'
+        '@' | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '=' | '<' | '>' | '~'
     )
 }
 
@@ -871,6 +878,47 @@ mod tests {
         e.process(Keystroke::char(' '));
         type_str(&mut e, "reset");
         assert_eq!(e.buffer.displayed, "Reset");
+    }
+
+    #[test]
+    fn letters_and_vni_tone_digits_stay_inside_the_word() {
+        assert!(!is_word_boundary('a'));
+        assert!(!is_word_boundary('ố'));
+        assert!(!is_word_boundary('2'));
+        assert!(is_word_boundary(' '));
+        assert!(is_word_boundary('.'));
+        assert!(is_word_boundary('@'));
+        assert!(is_word_boundary('+'));
+    }
+
+    #[test]
+    fn an_at_sign_puts_the_word_back_as_typed() {
+        let mut e = Engine::new(Config {
+            method: InputMethod::Vni,
+            ..Default::default()
+        });
+        type_str(&mut e, "hoa2");
+        assert_eq!(e.buffer.displayed, "hòa");
+
+        let actions = e.process(Keystroke::char('@'));
+        assert_eq!(
+            actions,
+            vec![
+                EditAction::Backspace(2),
+                EditAction::Insert("oa2".into()),
+                EditAction::Insert("@".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_full_stop_leaves_the_tone_alone() {
+        let mut e = engine();
+        type_str(&mut e, "chaof");
+        assert_eq!(e.buffer.displayed, "chào");
+
+        let actions = e.process(Keystroke::char('.'));
+        assert_eq!(actions, vec![EditAction::Insert(".".into())]);
     }
 
     #[test]
