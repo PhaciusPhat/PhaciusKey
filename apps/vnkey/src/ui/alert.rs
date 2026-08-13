@@ -18,6 +18,35 @@ const SCRIPT: &str = include_str!("assets/alert.js");
 const WIDTH: f64 = 380.0;
 const INITIAL_HEIGHT: f64 = 160.0;
 
+/// `-[NSWindow orderFrontRegardless]` raises a window without activating the
+/// application. `makeKeyAndOrderFront:`, which `Window::set_visible` sends,
+/// would move the keyboard to this window, and it has no field to type into.
+#[cfg(target_os = "macos")]
+fn order_front_regardless(window: *mut std::ffi::c_void) {
+    use std::ffi::{c_char, c_void};
+
+    #[link(name = "objc")]
+    extern "C" {
+        fn sel_registerName(name: *const c_char) -> *const c_void;
+        fn objc_msgSend();
+    }
+
+    type SendNoArgs = unsafe extern "C" fn(*mut c_void, *const c_void);
+
+    if window.is_null() {
+        return;
+    }
+
+    // SAFETY: `objc_msgSend` has to be called through a signature matching the
+    // selector's own; `orderFrontRegardless` takes no argument and returns
+    // nothing. The window pointer belongs to tao, which outlives this call.
+    unsafe {
+        let selector = sel_registerName(c"orderFrontRegardless".as_ptr());
+        let send = std::mem::transmute::<unsafe extern "C" fn(), SendNoArgs>(objc_msgSend);
+        send(window, selector);
+    }
+}
+
 fn notice_json(notice: &Notice) -> String {
     json!({
         "title": notice.title,
@@ -74,6 +103,20 @@ impl Alert {
             .webview
             .evaluate_script(&format!("window.__setNotice({})", notice_json(notice)));
         self.place(target);
+        self.reveal();
+    }
+
+    /// An update notice arrives unbidden, so it is shown without being given the
+    /// keyboard.
+    #[cfg(target_os = "macos")]
+    fn reveal(&self) {
+        use tao::platform::macos::WindowExtMacOS;
+
+        order_front_regardless(self.window.ns_window());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn reveal(&self) {
         self.window.set_visible(true);
         self.window.set_focus();
     }
