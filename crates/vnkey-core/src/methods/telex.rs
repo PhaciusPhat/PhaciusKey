@@ -69,7 +69,7 @@ impl TelexState {
             } else {
                 has_vowel(&self.syllable)
             };
-            if acts {
+            if acts && !self.cancelled {
                 if self.tone == tone && tone != Tone::Flat {
                     self.tone = Tone::Flat;
                     self.tone_applied = false;

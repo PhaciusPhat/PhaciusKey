@@ -36,7 +36,7 @@ pub fn process_vni(raw: &str) -> MethodResult {
             } else {
                 has_vowel(&syllable)
             };
-            if !acts {
+            if !acts || cancelled {
                 syllable.push(ch);
                 mask.push(false);
             } else if tone == new_tone && new_tone != Tone::Flat {
