@@ -90,7 +90,7 @@ fn main() {
     {
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
         let mut event_loop = event_loop;
-        event_loop.set_activation_policy(ActivationPolicy::Accessory);
+        event_loop.set_activation_policy(ActivationPolicy::Regular);
         run(event_loop, forced_alert);
     }
 
@@ -264,6 +264,11 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
                     }
                 }
             }
+            // The Dock icon is the only affordance that would otherwise lead
+            // nowhere: the app keeps running with no window of its own.
+            Event::Reopen { .. } => {
+                open_settings(&mut settings_win, target, &proxy);
+            }
             // Clicking away from the panel dismisses it, the way the menu it
             // replaced behaved.
             Event::WindowEvent {
@@ -328,7 +333,7 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
 /// rather than each one being remembered at each call site.
 fn push_state(tray: &Option<Tray>, settings_win: &Option<SettingsWindow>, panel: &Option<Panel>) {
     if let Some(tray) = tray {
-        tray.refresh(&state::settings(), state::current_app().as_deref());
+        tray.refresh(state::current_app().as_deref());
     }
     if let Some(win) = settings_win {
         win.push_state();

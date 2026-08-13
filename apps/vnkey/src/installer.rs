@@ -131,8 +131,11 @@ fn swap_in_place(staged: &Path, target: &Path) -> Result<(), String> {
 pub fn relaunch_and_exit(app: &Path) -> ! {
     #[cfg(target_os = "macos")]
     {
+        // `-g` leaves the relaunched app unactivated. Without it the app takes
+        // the keyboard from whatever the user is typing in, because it is a
+        // Dock app rather than the agent it once was.
         let script = format!(
-            "while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; open -n '{app}'",
+            "while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; open -g -n '{app}'",
             pid = std::process::id(),
             app = app.to_string_lossy().replace('\'', "'\\''"),
         );
