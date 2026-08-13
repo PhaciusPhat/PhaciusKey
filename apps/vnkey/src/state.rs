@@ -10,6 +10,23 @@ struct Shell {
     settings: Settings,
     current_app: Option<String>,
     seen_apps: Vec<String>,
+    /// What the toggle shortcut asked for in the application in front, when the
+    /// saved settings cannot express it. Dropped when another application comes
+    /// forward, so the app list the user curated is what persists.
+    app_override: Option<bool>,
+}
+
+impl Shell {
+    fn vietnamese_here(&self) -> bool {
+        self.app_override
+            .unwrap_or_else(|| self.settings.vietnamese_on(self.current_app.as_deref()))
+    }
+
+    fn apply_config(&mut self) {
+        let mut config = self.settings.to_core(self.current_app.as_deref());
+        config.enabled = self.vietnamese_here();
+        self.engine.set_config(config);
+    }
 }
 
 static SHELL: OnceLock<Mutex<Shell>> = OnceLock::new();
@@ -86,6 +103,7 @@ pub fn init(settings: Settings) {
         settings,
         current_app: None,
         seen_apps: Vec::new(),
+        app_override: None,
     }));
 }
 
@@ -153,8 +171,8 @@ pub fn update(f: impl FnOnce(&mut Settings)) -> Settings {
     let updated = with(|s| {
         f(&mut s.settings);
         cache_toggle(&s.settings);
-        s.engine
-            .set_config(s.settings.to_core(s.current_app.as_deref()));
+        s.app_override = None;
+        s.apply_config();
         s.settings.save();
         s.settings.clone()
     })
@@ -163,11 +181,41 @@ pub fn update(f: impl FnOnce(&mut Settings)) -> Settings {
     updated
 }
 
+/// The state the toggle shortcut leaves behind.
+#[derive(Debug, PartialEq, Eq)]
+struct Toggled {
+    enabled: bool,
+    app_override: Option<bool>,
+}
+
+/// The machine-wide switch cannot turn Vietnamese on in an application the
+/// settings leave in English, so pressing the shortcut there holds the choice
+/// for that application instead of editing the list the user curated.
+fn toggled(enabled: bool, excluded_here: bool, app_override: Option<bool>) -> Toggled {
+    let want = !app_override.unwrap_or(!excluded_here && enabled);
+    if excluded_here {
+        Toggled {
+            enabled,
+            app_override: Some(want),
+        }
+    } else {
+        Toggled {
+            enabled: want,
+            app_override: None,
+        }
+    }
+}
+
 pub fn toggle_vietnamese() -> Settings {
     let updated = with(|s| {
-        s.settings.enabled = !s.settings.enabled;
-        s.engine
-            .set_config(s.settings.to_core(s.current_app.as_deref()));
+        let next = toggled(
+            s.settings.enabled,
+            s.settings.excluded_for(s.current_app.as_deref()),
+            s.app_override,
+        );
+        s.settings.enabled = next.enabled;
+        s.app_override = next.app_override;
+        s.apply_config();
         s.engine.reset();
         s.settings.save();
         s.settings.clone()
@@ -187,7 +235,8 @@ pub fn set_current_app(name: &str) {
             s.seen_apps.push(name.to_string());
         }
         s.current_app = Some(name.to_string());
-        s.engine.set_config(s.settings.to_core(Some(name)));
+        s.app_override = None;
+        s.apply_config();
         s.engine.reset();
         true
     })
@@ -206,7 +255,14 @@ pub fn seen_apps() -> Vec<String> {
 }
 
 pub fn vietnamese_active() -> bool {
-    with(|s| s.settings.vietnamese_on(s.current_app.as_deref())).unwrap_or(false)
+    with(|s| s.vietnamese_here()).unwrap_or(false)
+}
+
+/// Whether the application in front is being left in English, which the toggle
+/// shortcut can suspend for as long as that application stays in front.
+pub fn exclusion_in_effect() -> bool {
+    with(|s| s.settings.excluded_for(s.current_app.as_deref()) && !s.vietnamese_here())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -235,5 +291,63 @@ mod tests {
     fn an_unset_shortcut_packs_to_zero() {
         assert_eq!(pack(None), 0);
         assert_eq!(unpack(0), None);
+    }
+
+    #[test]
+    fn the_shortcut_flips_the_machine_wide_switch() {
+        assert_eq!(
+            toggled(true, false, None),
+            Toggled {
+                enabled: false,
+                app_override: None,
+            }
+        );
+        assert_eq!(
+            toggled(false, false, None),
+            Toggled {
+                enabled: true,
+                app_override: None,
+            }
+        );
+    }
+
+    #[test]
+    fn the_shortcut_turns_an_english_only_app_on_without_editing_the_list() {
+        assert_eq!(
+            toggled(true, true, None),
+            Toggled {
+                enabled: true,
+                app_override: Some(true),
+            }
+        );
+        assert_eq!(
+            toggled(false, true, None),
+            Toggled {
+                enabled: false,
+                app_override: Some(true),
+            }
+        );
+    }
+
+    #[test]
+    fn the_shortcut_takes_an_english_only_app_back_off() {
+        assert_eq!(
+            toggled(true, true, Some(true)),
+            Toggled {
+                enabled: true,
+                app_override: Some(false),
+            }
+        );
+    }
+
+    #[test]
+    fn the_shortcut_drops_an_override_the_settings_no_longer_need() {
+        assert_eq!(
+            toggled(true, false, Some(false)),
+            Toggled {
+                enabled: true,
+                app_override: None,
+            }
+        );
     }
 }

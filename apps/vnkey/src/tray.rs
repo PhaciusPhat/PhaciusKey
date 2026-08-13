@@ -55,8 +55,8 @@ impl Tray {
         Ok(())
     }
 
-    pub fn refresh(&self, settings: &Settings, current_app: Option<&str>) {
-        let effective = settings.vietnamese_on(current_app);
+    pub fn refresh(&self, current_app: Option<&str>) {
+        let effective = crate::state::vietnamese_active();
 
         let status = if crate::platform::secure_input_active() {
             "⚠ Secure input on — Vietnamese paused (password field?)".to_string()
