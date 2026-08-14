@@ -133,8 +133,19 @@ mod tests {
         }
     }
 
+    /// The window draws its switches from the payload, so a fresh install must
+    /// see them off there too and not merely in `Settings::default`.
     #[test]
-    fn the_dock_is_kept_by_default() {
-        assert_eq!(payload()["show_in_dock"], json!(true));
+    fn a_fresh_install_reads_as_off_in_the_window() {
+        let p = payload();
+        for key in [
+            "enabled",
+            "auto_restore",
+            "standalone_w",
+            "macros_enabled",
+            "show_in_dock",
+        ] {
+            assert_eq!(p[key], json!(false), "{key} should read as off");
+        }
     }
 }

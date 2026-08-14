@@ -44,14 +44,19 @@ pub struct Settings {
     legacy_app_modes: BTreeMap<String, bool>,
 }
 
+/// A fresh install turns nothing on by itself. Every switch here starts off, so
+/// what the typist gets is what they went and asked for — `enabled` included,
+/// which the menu bar icon and the toggle shortcut both offer on the first
+/// keystroke. Only `auto_update` is exempt: a build that cannot replace itself
+/// cannot be fixed either.
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             method: Method::Telex,
             placement: Placement::Modern,
-            auto_restore: true,
-            standalone_w: true,
+            auto_restore: false,
+            standalone_w: false,
             quick_telex: false,
             quick_start_consonant: false,
             quick_end_consonant: false,
@@ -59,9 +64,9 @@ impl Default for Settings {
             auto_update: true,
             toggle_shortcut: "ctrl+shift+v".into(),
             start_at_login: false,
-            show_in_dock: true,
+            show_in_dock: false,
             disabled_apps: Vec::new(),
-            macros_enabled: true,
+            macros_enabled: false,
             macros: BTreeMap::new(),
             slow_apps: Vec::new(),
             autocomplete_fix_apps: Vec::new(),
@@ -619,7 +624,7 @@ mod tests {
         assert_eq!(s.toggle_shortcut, "cmd+space");
         assert_eq!(s.disabled_apps, ["Terminal"]);
         // A key it never heard of takes the default rather than resetting the rest.
-        assert!(s.show_in_dock);
+        assert_eq!(s.show_in_dock, Settings::default().show_in_dock);
     }
 
     #[test]
@@ -639,6 +644,28 @@ mod tests {
         assert!(parse("this is not toml at all {{{").is_none());
     }
 
+    /// Nothing is turned on for someone who has just installed it.
+    #[test]
+    fn a_fresh_install_starts_with_every_switch_off() {
+        let s = Settings::default();
+        for (name, on) in [
+            ("enabled", s.enabled),
+            ("auto_restore", s.auto_restore),
+            ("standalone_w", s.standalone_w),
+            ("quick_telex", s.quick_telex),
+            ("quick_start_consonant", s.quick_start_consonant),
+            ("quick_end_consonant", s.quick_end_consonant),
+            ("auto_capitalize", s.auto_capitalize),
+            ("macros_enabled", s.macros_enabled),
+            ("start_at_login", s.start_at_login),
+            ("show_in_dock", s.show_in_dock),
+        ] {
+            assert!(!on, "{name} should start off");
+        }
+        // The exception: a build that cannot replace itself cannot be fixed.
+        assert!(s.auto_update);
+    }
+
     #[test]
     fn excluded_for_is_case_insensitive() {
         let settings = Settings {
@@ -652,7 +679,10 @@ mod tests {
 
     #[test]
     fn exclusion_beats_the_global_switch() {
-        let mut settings = Settings::default();
+        let mut settings = Settings {
+            enabled: true,
+            ..Default::default()
+        };
         assert!(settings.vietnamese_on(Some("Safari")));
 
         settings.set_excluded("Safari", true);
@@ -1009,7 +1039,10 @@ mod tests {
 
     #[test]
     fn turning_macros_off_hides_them_from_the_engine() {
-        let mut settings = Settings::default();
+        let mut settings = Settings {
+            macros_enabled: true,
+            ..Default::default()
+        };
         settings.macros.insert("vd".into(), "ví dụ".into());
         assert_eq!(settings.to_core(None).macros.len(), 1);
 
