@@ -252,16 +252,20 @@ fn screen_vni(seq: &str) -> String {
 #[test]
 fn repeating_a_key_undoes_it_and_types_it() {
     assert_eq!(screen_vni("d9oan1"), "đoán");
-    assert_eq!(screen_vni("d9oan11"), "đoan1");
     assert_eq!(screen("aa", 0), "â");
     assert_eq!(screen("aaa", 0), "aa");
     assert_eq!(screen("eee", 0), "ee");
     assert_eq!(screen("ooo", 0), "oo");
-    assert_eq!(screen("ddd", 0), "dd");
-    assert_eq!(screen("oww", 0), "ow");
-    assert_eq!(screen("ass", 0), "as");
-    assert_eq!(screen_vni("a66"), "a6");
-    assert_eq!(screen_vni("d99"), "d9");
+}
+
+#[test]
+fn an_undo_that_leaves_no_vietnamese_word_reads_back_key_for_key() {
+    for seq in ["ddd", "oww", "ass"] {
+        assert_eq!(screen(seq, 0), seq);
+    }
+    for seq in ["d9oan11", "a66", "d99"] {
+        assert_eq!(screen_vni(seq), seq);
+    }
 }
 
 #[test]
