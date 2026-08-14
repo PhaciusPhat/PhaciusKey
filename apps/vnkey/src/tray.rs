@@ -26,6 +26,7 @@ impl Tray {
     pub fn new(settings: &Settings) -> Result<Self, String> {
         let tray = TrayIconBuilder::new()
             .with_icon(status_icon(settings.enabled).ok_or("failed to render the tray icon")?)
+            .with_icon_as_template(true)
             .with_tooltip("PhaciusKey — Vietnamese input")
             .build()
             .map_err(|e| e.to_string())?;
@@ -74,14 +75,18 @@ impl Tray {
             .set_tooltip(Some(format!("PhaciusKey — {status}")));
 
         let _ = self.tray.set_icon(status_icon(effective));
+        // `set_icon` re-sends the image with `is_template: false`, so the flag
+        // has to be put back or the second icon of a session loses the theme.
+        self.tray.set_icon_as_template(true);
     }
 }
 
 type Rgb = (f32, f32, f32);
 
-/// The menu bar draws the icon straight onto the wallpaper, where a tint of its
-/// own competes with whatever is behind it; the exported iconset sits on
-/// Finder's own background instead, and keeps the app's colour.
+/// macOS draws a template image from its alpha alone — black on a light menu
+/// bar, white on a dark one — and ignores these channels; they are what every
+/// other platform draws instead. The exported iconset is never a template, so
+/// it keeps the app's own colour.
 const MENU_BAR: Rgb = (255.0, 255.0, 255.0);
 const APP_ICON: Rgb = (52.0, 199.0, 89.0);
 
