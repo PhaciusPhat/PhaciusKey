@@ -41,12 +41,21 @@ impl Engine {
         self.config = config;
     }
 
-    /// Process one keystroke and return the edit actions the shell must execute.
+    /// Process one keystroke and return the edit actions the shell must execute;
+    /// empty means the keystroke was not consumed and must reach the application
+    /// unchanged.
     pub fn process(&mut self, key: Keystroke) -> Vec<EditAction> {
         if !self.config.enabled {
             return vec![];
         }
+        let actions = self.edits(key);
+        if retypes_only(&actions, key.ch) {
+            return vec![];
+        }
+        actions
+    }
 
+    fn edits(&mut self, key: Keystroke) -> Vec<EditAction> {
         if key.is_boundary {
             return self.commit_and_reset(Some(key.ch), true);
         }
@@ -396,6 +405,14 @@ fn is_vowel(ch: char) -> bool {
     )
 }
 
+/// A character the shell synthesises carries no keycode, so an application that
+/// binds the key to a command — Quick Look, page down, play/pause — never sees it.
+/// Actions that do nothing but type `ch` back are therefore worse than no actions
+/// at all: the shell must leave the real key event alone.
+fn retypes_only(actions: &[EditAction], ch: char) -> bool {
+    matches!(actions, [EditAction::Insert(text)] if text.chars().eq([ch]))
+}
+
 /// A letter both methods spell with two keys — `aa`, `ow`, `dd`, `a6`, `d9`. A
 /// tone is one key, so a tone mark is not one of these.
 fn is_composed(ch: char) -> bool {
@@ -541,8 +558,7 @@ mod tests {
         let mut e = engine();
         type_str(&mut e, "as");
         e.backspace();
-        let actions = type_str(&mut e, "b");
-        assert_eq!(actions, vec![EditAction::Insert("b".into())]);
+        assert!(type_str(&mut e, "b").is_empty());
         assert_eq!(e.buffer.raw, "b");
     }
 
@@ -705,8 +721,7 @@ mod tests {
     fn quick_end_consonant_needs_a_vowel_before_it() {
         let mut e = quick_engine(false, true);
         type_str(&mut e, "anh");
-        let actions = e.process(Keystroke::char(' '));
-        assert_eq!(actions, vec![EditAction::Insert(" ".into())]);
+        assert!(e.process(Keystroke::char(' ')).is_empty());
     }
 
     #[test]
@@ -745,16 +760,14 @@ mod tests {
     fn an_expansion_that_is_not_vietnamese_is_left_alone() {
         let mut e = quick_engine(true, true);
         type_str(&mut e, "for");
-        let actions = e.process(Keystroke::char(' '));
-        assert_eq!(actions, vec![EditAction::Insert(" ".into())]);
+        assert!(e.process(Keystroke::char(' ')).is_empty());
     }
 
     #[test]
     fn quick_consonants_are_off_by_default() {
         let mut e = engine();
         type_str(&mut e, "fa");
-        let actions = e.process(Keystroke::char(' '));
-        assert_eq!(actions, vec![EditAction::Insert(" ".into())]);
+        assert!(e.process(Keystroke::char(' ')).is_empty());
     }
 
     #[test]
@@ -917,8 +930,74 @@ mod tests {
         type_str(&mut e, "chaof");
         assert_eq!(e.buffer.displayed, "chào");
 
-        let actions = e.process(Keystroke::char('.'));
-        assert_eq!(actions, vec![EditAction::Insert(".".into())]);
+        assert!(e.process(Keystroke::char('.')).is_empty());
+    }
+
+    #[test]
+    fn a_key_that_only_types_itself_is_left_to_the_application() {
+        let mut e = engine();
+        for ch in "chao".chars() {
+            assert!(
+                e.process(Keystroke::char(ch)).is_empty(),
+                "{ch:?} should reach the application"
+            );
+        }
+        assert_eq!(e.buffer.displayed, "chao");
+        assert!(e.process(Keystroke::char(' ')).is_empty());
+
+        let mut e = engine();
+        type_str(&mut e, "chaof");
+        assert!(e.process(Keystroke::char('.')).is_empty());
+    }
+
+    #[test]
+    fn a_key_that_changes_the_word_is_consumed() {
+        let mut e = engine();
+        type_str(&mut e, "chao");
+        assert_eq!(
+            e.process(Keystroke::char('f')),
+            vec![EditAction::Backspace(2), EditAction::Insert("ào".into())]
+        );
+    }
+
+    #[test]
+    fn a_boundary_that_expands_a_macro_still_types_itself() {
+        let mut config = Config::default();
+        config.macros.insert("btw".into(), "by the way".into());
+        let mut e = Engine::new(config);
+        type_str(&mut e, "btw");
+        assert_eq!(
+            e.process(Keystroke::char(' ')),
+            vec![
+                EditAction::Backspace(3),
+                EditAction::Insert("by the way".into()),
+                EditAction::Insert(" ".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_boundary_that_restores_the_raw_keys_still_types_itself() {
+        let mut e = engine();
+        type_str(&mut e, "ddaay");
+        assert_eq!(e.buffer.displayed, "đây");
+
+        let actions = e.process(Keystroke::char('@'));
+        assert_eq!(actions.last(), Some(&EditAction::Insert("@".into())));
+        assert!(actions.len() > 1);
+    }
+
+    #[test]
+    fn a_key_the_engine_capitalizes_is_consumed() {
+        let mut e = Engine::new(Config {
+            auto_capitalize: true,
+            ..Default::default()
+        });
+        e.commit_line();
+        assert_eq!(
+            e.process(Keystroke::char('h')),
+            vec![EditAction::Insert("H".into())]
+        );
     }
 
     #[test]
