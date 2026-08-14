@@ -178,12 +178,13 @@ fn set_listed(list: &mut Vec<String>, name: &str, on: bool) {
     }
 }
 
-fn apply_set(key: &str, value: &Value) {
-    let toggle: Option<fn(&mut Settings, bool)> = match key {
+fn toggle_for(key: &str) -> Option<fn(&mut Settings, bool)> {
+    match key {
         "enabled" => Some(|s, on| s.enabled = on),
         "auto_restore" => Some(|s, on| s.auto_restore = on),
         "auto_update" => Some(|s, on| s.auto_update = on),
         "start_at_login" => Some(|s, on| s.start_at_login = on),
+        "show_in_dock" => Some(|s, on| s.show_in_dock = on),
         "standalone_w" => Some(|s, on| s.standalone_w = on),
         "quick_telex" => Some(|s, on| s.quick_telex = on),
         "quick_start_consonant" => Some(|s, on| s.quick_start_consonant = on),
@@ -191,9 +192,11 @@ fn apply_set(key: &str, value: &Value) {
         "auto_capitalize" => Some(|s, on| s.auto_capitalize = on),
         "macros_enabled" => Some(|s, on| s.macros_enabled = on),
         _ => None,
-    };
+    }
+}
 
-    if let Some(set) = toggle {
+fn apply_set(key: &str, value: &Value) {
+    if let Some(set) = toggle_for(key) {
         let Some(on) = value.as_bool() else { return };
         let updated = state::update(|s| set(s, on));
         if key == "start_at_login" {
@@ -369,6 +372,26 @@ mod tests {
             assert!(
                 serde_json::from_str::<Cmd>(msg).is_ok(),
                 "should parse: {msg}"
+            );
+        }
+    }
+
+    /// Every switch in the settings window sends `set` with its `data-key`, so a
+    /// key `apply_set` does not know is a switch that silently does nothing.
+    #[test]
+    fn every_switch_in_the_settings_window_is_a_key_apply_set_accepts() {
+        let markup = include_str!("assets/settings.html");
+        let keys: Vec<&str> = markup
+            .split("data-key=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .collect();
+
+        assert!(keys.contains(&"show_in_dock"), "found: {keys:?}");
+        for key in keys {
+            assert!(
+                toggle_for(key).is_some(),
+                "settings.html has a switch for {key:?} that apply_set ignores"
             );
         }
     }

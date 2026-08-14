@@ -82,20 +82,55 @@ fn main() {
         settings.save();
     }
 
+    let show_in_dock = settings.show_in_dock;
     state::init(settings);
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
     #[cfg(target_os = "macos")]
     {
-        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+        use tao::platform::macos::EventLoopExtMacOS;
         let mut event_loop = event_loop;
-        event_loop.set_activation_policy(ActivationPolicy::Regular);
+        event_loop.set_activation_policy(dock_policy(show_in_dock));
         run(event_loop, forced_alert);
     }
 
     #[cfg(not(target_os = "macos"))]
-    run(event_loop, forced_alert);
+    {
+        let _ = show_in_dock;
+        run(event_loop, forced_alert);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn dock_policy(show_in_dock: bool) -> tao::platform::macos::ActivationPolicy {
+    use tao::platform::macos::ActivationPolicy;
+    if show_in_dock {
+        ActivationPolicy::Regular
+    } else {
+        ActivationPolicy::Accessory
+    }
+}
+
+/// `NSApplication` holds the Dock tile for as long as its activation policy says
+/// Regular, so the setting is applied to the running app and not only at launch.
+fn apply_dock_policy(
+    target: &tao::event_loop::EventLoopWindowTarget<UserEvent>,
+    applied: &mut Option<bool>,
+) {
+    let want = state::settings().show_in_dock;
+    if *applied == Some(want) {
+        return;
+    }
+    *applied = Some(want);
+
+    #[cfg(target_os = "macos")]
+    {
+        use tao::platform::macos::EventLoopWindowTargetExtMacOS;
+        target.set_activation_policy_at_runtime(dock_policy(want));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = target;
 }
 
 fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -> ! {
@@ -117,6 +152,7 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
     let mut panel: Option<Panel> = None;
     let mut alert: Option<Alert> = None;
     let mut forced_alert = forced_alert;
+    let mut dock_shown: Option<bool> = None;
 
     event_loop.run(move |event, target, control_flow| {
         match event {
@@ -192,6 +228,7 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
                 }
             },
             Event::UserEvent(UserEvent::StateChanged) => {
+                apply_dock_policy(target, &mut dock_shown);
                 push_state(tray.as_ref(), settings_win.as_ref(), panel.as_ref());
             }
             Event::UserEvent(UserEvent::Ipc(surface, msg)) => {

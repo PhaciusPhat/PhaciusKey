@@ -51,6 +51,7 @@ pub fn state_json(s: &Settings, current_app: Option<&str>, installed_apps: &[Str
         "auto_capitalize": s.auto_capitalize,
         "auto_update": s.auto_update,
         "start_at_login": autostart::effective(s.start_at_login),
+        "show_in_dock": s.show_in_dock,
         "toggle_shortcut": s.toggle_shortcut,
         "shortcut_parts": shortcut_parts(&s.toggle_shortcut),
         "shortcut_valid": parse_shortcut(&s.toggle_shortcut).is_some(),
@@ -112,5 +113,28 @@ mod tests {
     #[test]
     fn the_payload_never_scopes_the_switch_to_one_application() {
         assert_eq!(payload()["excluded_summary"], "Everywhere");
+    }
+
+    /// A switch renders from the payload, so a key the payload omits draws as
+    /// off however the setting is really set.
+    #[test]
+    fn every_switch_in_the_settings_window_is_a_key_the_payload_carries() {
+        let markup = include_str!("assets/settings.html");
+        let payload = payload();
+        for key in markup
+            .split("data-key=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+        {
+            assert!(
+                payload.get(key).is_some(),
+                "settings.html has a switch for {key:?} that the payload never sends"
+            );
+        }
+    }
+
+    #[test]
+    fn the_dock_is_kept_by_default() {
+        assert_eq!(payload()["show_in_dock"], json!(true));
     }
 }
