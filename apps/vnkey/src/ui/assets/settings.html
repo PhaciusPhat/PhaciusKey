@@ -11,6 +11,7 @@
       <button type="button" role="tab" data-tab="macros" aria-selected="false">Macros</button>
       <button type="button" role="tab" data-tab="apps" aria-selected="false">Apps</button>
       <button type="button" role="tab" data-tab="about" aria-selected="false">About</button>
+      <button type="button" class="quit" id="quit">Quit PhaciusKey</button>
     </nav>
 
     <div class="pane" id="pane">
@@ -141,6 +142,10 @@
         <div class="row">
           <div class="lbl"><b>Start at login</b></div>
           <label class="sw"><input type="checkbox" id="start_at_login" data-key="start_at_login"><i></i></label>
+        </div>
+        <div class="row" id="dock-row">
+          <div class="lbl"><b>Keep in the Dock</b><small>Turn off to live in the menu bar alone</small></div>
+          <label class="sw"><input type="checkbox" id="show_in_dock" data-key="show_in_dock"><i></i></label>
         </div>
 
         <h2 class="group">Cheatsheet</h2>

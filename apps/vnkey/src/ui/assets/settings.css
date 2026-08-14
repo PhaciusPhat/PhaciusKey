@@ -53,6 +53,13 @@
 }
 .nav button:focus-visible { outline: 2px solid var(--jade); outline-offset: -2px; }
 
+/* Sits apart from the tabs: it leaves the app rather than choosing a pane. */
+.nav .quit {
+  margin-top: auto; border-top: 1px solid var(--border-soft);
+  border-radius: 0 0 8px 8px; padding-top: 11px; color: var(--danger);
+}
+.nav .quit:hover { background: rgba(255,156,156,.10); color: var(--danger); }
+
 /* The one scrolling region: the header and the nav never move. */
 .pane { flex: 1; min-width: 0; overflow-y: auto; padding: 4px 20px 22px; }
 .tab[hidden] { display: none; }

@@ -21,6 +21,7 @@
     send({ cmd: "drag_window" });
   });
   $("close").addEventListener("click", function () { send({ cmd: "close_window" }); });
+  $("quit").addEventListener("click", function () { send({ cmd: "quit" }); });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && !recording) send({ cmd: "close_window" });
     if (e.key === "w" && (e.metaKey || e.ctrlKey)) send({ cmd: "close_window" });
@@ -298,6 +299,7 @@
 
     // Four switches that do nothing under VNI are worse than four missing ones.
     $("telex-group").hidden = s.method !== "telex";
+    $("dock-row").hidden = s.platform !== "macos";
 
     if (s.notice) showToast(s.notice);
 
