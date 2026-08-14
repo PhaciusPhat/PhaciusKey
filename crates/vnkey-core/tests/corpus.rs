@@ -52,6 +52,24 @@ fn telex_horn_clusters() {
 }
 
 #[test]
+fn a_mark_composes_wherever_it_is_typed_after_its_vowel() {
+    for (want, orders) in [
+        ("đoán", &["ddoans", "ddoasn"][..]),
+        ("việt", &["vieetj", "vietej"]),
+        ("tiếng", &["tieengs", "tieesng", "tienges"]),
+        ("muốn", &["muoons", "muonos", "muonso"]),
+        ("được", &["dduwowcj", "dduwowjc", "dduwojwc", "dduwjowc"]),
+        ("thương", &["thuwowng", "thuowng", "thuwong"]),
+        ("mưa", &["muwa", "muaw"]),
+        ("ăn", &["awn", "anw"]),
+    ] {
+        for seq in orders {
+            assert_eq!(telex(seq), want, "telex {seq:?}");
+        }
+    }
+}
+
+#[test]
 fn gi_and_qu_are_onsets_not_nuclei() {
     for (seq, want) in [("gias", "giá"), ("quaf", "quà"), ("quyeens", "quyến")] {
         assert_eq!(telex(seq), want, "telex {seq:?}");
@@ -252,6 +270,7 @@ fn screen_vni(seq: &str) -> String {
 #[test]
 fn repeating_a_key_undoes_it_and_types_it() {
     assert_eq!(screen_vni("d9oan1"), "đoán");
+    assert_eq!(screen_vni("d9oan11"), "đoan1");
     assert_eq!(screen("aa", 0), "â");
     assert_eq!(screen("aaa", 0), "aa");
     assert_eq!(screen("eee", 0), "ee");
@@ -263,7 +282,7 @@ fn an_undo_that_leaves_no_vietnamese_word_reads_back_key_for_key() {
     for seq in ["ddd", "oww", "ass"] {
         assert_eq!(screen(seq, 0), seq);
     }
-    for seq in ["d9oan11", "a66", "d99"] {
+    for seq in ["a66", "d99"] {
         assert_eq!(screen_vni(seq), seq);
     }
 }

@@ -99,5 +99,5 @@ fn tone_reverses_after_space_and_backspace() {
     e.process(Keystroke::char(' '));
     e.backspace();
     e.process(Keystroke::char('1'));
-    assert_eq!(e.current_displayed(), "d9oan11");
+    assert_eq!(e.current_displayed(), "đoan1");
 }

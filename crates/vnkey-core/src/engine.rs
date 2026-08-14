@@ -137,7 +137,13 @@ impl Engine {
         }
 
         if self.passthrough {
-            return self.show(raw);
+            return match &method_result.literal {
+                Some(literal) if !method_result.is_foreign && self.keeps_composed(literal) => {
+                    let text = apply_case_mask(literal, &method_result.case_mask);
+                    self.show(&text)
+                }
+                _ => self.show(raw),
+            };
         }
 
         if let Some(literal) = &method_result.literal {
@@ -149,6 +155,10 @@ impl Engine {
         let target = apply_case_mask(&target, &method_result.case_mask);
 
         self.show(&target)
+    }
+
+    fn keeps_composed(&self, literal: &str) -> bool {
+        self.buffer.displayed.chars().any(is_composed) && literal.chars().any(is_composed)
     }
 
     fn syllable_possible(&self, bare: &str) -> bool {
@@ -387,6 +397,14 @@ fn is_vowel(ch: char) -> bool {
     )
 }
 
+/// A letter both methods spell with two keys — `aa`, `ow`, `dd`, `a6`, `d9`. A
+/// tone is one key, so a tone mark is not one of these.
+fn is_composed(ch: char) -> bool {
+    let lower = lower(ch);
+    let base = base_vowel(lower).unwrap_or(lower);
+    matches!(base, 'â' | 'ă' | 'ê' | 'ô' | 'ơ' | 'ư' | 'đ')
+}
+
 /// A Vietnamese word is letters, and VNI spells its tones with digits, so
 /// anything else closes the word.
 fn is_word_boundary(ch: char) -> bool {
@@ -538,7 +556,7 @@ mod tests {
         assert!(actions.is_empty());
         assert_eq!(e.buffer.displayed, "đoán");
         type_str(&mut e, "s");
-        assert_eq!(e.buffer.displayed, "ddoanss");
+        assert_eq!(e.buffer.displayed, "đoans");
     }
 
     #[test]
@@ -552,7 +570,7 @@ mod tests {
         assert!(e.backspace().is_empty());
         assert_eq!(e.buffer.displayed, "đoán");
         type_str(&mut e, "s");
-        assert_eq!(e.buffer.displayed, "ddoanss");
+        assert_eq!(e.buffer.displayed, "đoans");
     }
 
     #[test]

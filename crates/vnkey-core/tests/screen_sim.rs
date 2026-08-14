@@ -105,7 +105,8 @@ fn no_keystroke_disappears_mid_sentence() {
 fn a_restored_word_reads_back_key_for_key() {
     for sequence in [
         "error", "hurry", "sorry", "carry", "arrow", "mirror", "possible", "address", "dorrs",
-        "hassf", "toanssf", "dorr", "dorrr", "dorrrr", "aaas", "aaaf", "phass", "phassr",
+        "hassf", "toanssf", "dorr", "dorrr", "dorrrr", "aaas", "aaaf", "phass", "phassr", "press",
+        "class", "assess", "pass", "moods", "goods", "food", "settings", "coffee", "toppings",
     ] {
         assert_eq!(typed(InputMethod::Telex, sequence), sequence);
     }
@@ -123,11 +124,66 @@ fn a_press_after_an_undone_tone_types_one_character() {
     assert_eq!(screen.type_str("phas"), "phá");
     assert_eq!(screen.type_str("s"), "phass");
     assert_eq!(screen.type_str("r"), "phassr");
+}
 
-    let mut screen = Screen::new(InputMethod::Telex);
-    assert_eq!(screen.type_str("ddoans"), "đoán");
-    assert_eq!(screen.type_str("s"), "ddoanss");
-    assert_eq!(screen.type_str("n"), "ddoanssn");
+#[test]
+fn an_undo_keeps_a_letter_the_keys_composed() {
+    for (method, seq, undo, word, undone) in [
+        (InputMethod::Telex, "ddoans", 's', "đoán", "đoans"),
+        (InputMethod::Telex, "ddoasn", 's', "đoán", "đoans"),
+        (InputMethod::Telex, "vieetj", 'j', "việt", "viêtj"),
+        (InputMethod::Telex, "vietej", 'j', "việt", "viêtj"),
+        (InputMethod::Telex, "tieengs", 's', "tiếng", "tiêngs"),
+        (InputMethod::Telex, "tieesng", 's', "tiếng", "tiêngs"),
+        (InputMethod::Telex, "tienges", 's', "tiếng", "tiêngs"),
+        (InputMethod::Telex, "muonos", 's', "muốn", "muôns"),
+        (InputMethod::Telex, "dduwowcj", 'j', "được", "đươcj"),
+        (InputMethod::Telex, "cuwar", 'r', "cửa", "cưar"),
+        (InputMethod::Telex, "thuwowngf", 'f', "thường", "thươngf"),
+        (InputMethod::Vni, "d9oan1", '1', "đoán", "đoan1"),
+        (InputMethod::Vni, "vie6t5", '5', "việt", "viêt5"),
+        (InputMethod::Vni, "tie6ng1", '1', "tiếng", "tiêng1"),
+    ] {
+        let mut screen = Screen::new(method);
+        assert_eq!(screen.type_str(seq), word, "{method:?} {seq:?}");
+        screen.press(undo);
+        assert_eq!(screen.text, undone, "{method:?} {seq:?} then {undo:?}");
+    }
+}
+
+#[test]
+fn a_press_after_an_undo_that_kept_a_composed_letter_types_one_character() {
+    assert_eq!(typed(InputMethod::Telex, "ddoanssn"), "đoansn");
+    assert_eq!(typed(InputMethod::Telex, "ddoanssnn"), "đoansnn");
+    assert_eq!(typed(InputMethod::Telex, "vieetjjt"), "viêtjt");
+    assert_eq!(typed(InputMethod::Vni, "d9oan11n"), "đoan1n");
+}
+
+#[test]
+fn an_undo_that_leaves_nothing_composed_reads_the_keys_back() {
+    for (method, seq, undo, word, undone) in [
+        (InputMethod::Telex, "w", 'w', "ư", "ww"),
+        (InputMethod::Telex, "dd", 'd', "đ", "ddd"),
+        (InputMethod::Telex, "phas", 's', "phá", "phass"),
+        (InputMethod::Telex, "toans", 's', "toán", "toanss"),
+        (InputMethod::Telex, "dor", 'r', "dỏ", "dorr"),
+        (InputMethod::Vni, "pha1", '1', "phá", "pha11"),
+        (InputMethod::Vni, "a6", '6', "â", "a66"),
+    ] {
+        let mut screen = Screen::new(method);
+        assert_eq!(screen.type_str(seq), word, "{method:?} {seq:?}");
+        screen.press(undo);
+        assert_eq!(screen.text, undone, "{method:?} {seq:?} then {undo:?}");
+    }
+}
+
+#[test]
+fn an_undo_keeps_the_case_the_word_was_typed_in() {
+    assert_eq!(typed(InputMethod::Telex, "Ddoanss"), "Đoans");
+    assert_eq!(typed(InputMethod::Telex, "DDOANSS"), "ĐOANS");
+    assert_eq!(typed(InputMethod::Telex, "VIEETJJ"), "VIÊTJ");
+    assert_eq!(typed(InputMethod::Telex, "HaSS"), "HaSS");
+    assert_eq!(typed(InputMethod::Telex, "Ww"), "Ww");
 }
 
 const ADDRESSES: &[&str] = &[
