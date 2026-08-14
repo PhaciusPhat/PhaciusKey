@@ -42,7 +42,7 @@ fn diacritic_pair_keeps_the_first_keys_case() {
 
 #[test]
 fn cancelled_tone_key_keeps_its_typed_case() {
-    assert_eq!(displayed_after("HaSS"), "HaS");
+    assert_eq!(displayed_after("HaSS"), "HaSS");
 }
 
 #[test]

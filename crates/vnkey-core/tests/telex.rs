@@ -172,9 +172,10 @@ fn standalone_w_stays_a_letter_where_u_horn_cannot_follow() {
 }
 
 #[test]
-fn a_second_w_gives_the_letter_back() {
-    assert_eq!(displayed_after("ww"), "w");
-    assert_eq!(displayed_after("uww"), "uw");
+fn a_second_w_reads_the_keys_back() {
+    assert_eq!(displayed_after("ww"), "ww");
+    assert_eq!(displayed_after("www"), "www");
+    assert_eq!(displayed_after("uww"), "uww");
 }
 
 #[test]
@@ -182,7 +183,7 @@ fn standalone_w_keeps_the_typed_case() {
     assert_eq!(displayed_after("W"), "Ư");
     assert_eq!(displayed_after("Thw"), "Thư");
     assert_eq!(displayed_after("THW"), "THƯ");
-    assert_eq!(displayed_after("Ww"), "w");
+    assert_eq!(displayed_after("Ww"), "Ww");
 }
 
 #[test]

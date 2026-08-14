@@ -105,30 +105,29 @@ fn no_keystroke_disappears_mid_sentence() {
 fn a_restored_word_reads_back_key_for_key() {
     for sequence in [
         "error", "hurry", "sorry", "carry", "arrow", "mirror", "possible", "address", "dorrs",
-        "hassf", "toanssf",
+        "hassf", "toanssf", "dorr", "dorrr", "dorrrr", "aaas", "aaaf", "phass", "phassr",
     ] {
         assert_eq!(typed(InputMethod::Telex, sequence), sequence);
     }
+    for sequence in ["do33", "do333"] {
+        assert_eq!(typed(InputMethod::Vni, sequence), sequence);
+    }
 }
 
-/// Pressing a tone key twice removes the tone and types the key. A third press
-/// types one more character, rather than also putting back the press the tone
-/// rule spent.
+/// Pressing a tone key twice takes the tone off, and the word that is left is
+/// not Vietnamese: it reads back key for key from that press on, so no later
+/// press has to put back the key the tone rule spent along with itself.
 #[test]
-fn a_third_tone_key_types_one_character() {
-    assert_eq!(typed(InputMethod::Telex, "dorr"), "dor");
-    assert_eq!(typed(InputMethod::Telex, "dorrr"), "dorr");
-    assert_eq!(typed(InputMethod::Telex, "dorrrr"), "dorrr");
-    assert_eq!(typed(InputMethod::Vni, "do33"), "do3");
-    assert_eq!(typed(InputMethod::Vni, "do333"), "do33");
-}
+fn a_press_after_an_undone_tone_types_one_character() {
+    let mut screen = Screen::new(InputMethod::Telex);
+    assert_eq!(screen.type_str("phas"), "phá");
+    assert_eq!(screen.type_str("s"), "phass");
+    assert_eq!(screen.type_str("r"), "phassr");
 
-/// A key that follows an undone diacritic still reaches the screen: the word is
-/// literal from then on, so the key types itself.
-#[test]
-fn a_key_after_an_undone_diacritic_is_not_swallowed() {
-    assert_eq!(typed(InputMethod::Telex, "aaas"), "aas");
-    assert_eq!(typed(InputMethod::Telex, "aaaf"), "aaf");
+    let mut screen = Screen::new(InputMethod::Telex);
+    assert_eq!(screen.type_str("ddoans"), "đoán");
+    assert_eq!(screen.type_str("s"), "ddoanss");
+    assert_eq!(screen.type_str("n"), "ddoanssn");
 }
 
 const ADDRESSES: &[&str] = &[

@@ -126,26 +126,12 @@ impl Engine {
             || method_result.is_foreign
             || (tone != Tone::Flat && !tone_allowed_with_coda(tone, coda_of(bare)));
 
-        let was_passthrough = self.passthrough;
-
         if self.config.auto_restore && impossible {
             self.passthrough = true;
         }
 
         if self.passthrough {
-            if was_passthrough {
-                if let Some(ch) = repeated_tail(&raw) {
-                    self.buffer.displayed.push(ch);
-                    return vec![EditAction::Insert(ch.to_string())];
-                }
-            }
-            let text = match &method_result.literal {
-                Some(literal) if !was_passthrough && !method_result.is_foreign => {
-                    apply_case_mask(literal, &method_result.case_mask)
-                }
-                _ => raw,
-            };
-            return self.show(&text);
+            return self.show(&raw);
         }
 
         if let Some(literal) = &method_result.literal {
@@ -395,15 +381,6 @@ fn is_vowel(ch: char) -> bool {
     )
 }
 
-/// The key just typed, when it repeats the one before it. No word in either
-/// language triples a letter, so a third identical press asks for that
-/// character and not for the keys a tone rule spent earlier.
-fn repeated_tail(raw: &str) -> Option<char> {
-    let mut tail = raw.chars().rev();
-    let last = tail.next()?;
-    (tail.next()? == last).then_some(last)
-}
-
 /// A Vietnamese word is letters, and VNI spells its tones with digits, so
 /// anything else closes the word.
 fn is_word_boundary(ch: char) -> bool {
@@ -555,7 +532,7 @@ mod tests {
         assert!(actions.is_empty());
         assert_eq!(e.buffer.displayed, "đoán");
         type_str(&mut e, "s");
-        assert_eq!(e.buffer.displayed, "đoans");
+        assert_eq!(e.buffer.displayed, "ddoanss");
     }
 
     #[test]
@@ -569,7 +546,7 @@ mod tests {
         assert!(e.backspace().is_empty());
         assert_eq!(e.buffer.displayed, "đoán");
         type_str(&mut e, "s");
-        assert_eq!(e.buffer.displayed, "đoans");
+        assert_eq!(e.buffer.displayed, "ddoanss");
     }
 
     #[test]
@@ -620,7 +597,7 @@ mod tests {
         assert!(e.backspace().is_empty());
         assert_eq!(e.buffer.displayed, "há");
         type_str(&mut e, "s");
-        assert_eq!(e.buffer.displayed, "has");
+        assert_eq!(e.buffer.displayed, "hass");
     }
 
     #[test]
