@@ -9,7 +9,7 @@ baseurl: "/PhaciusKey"
 
 # Project
 repo: https://github.com/PhaciusPhat/PhaciusKey
-version: 0.0.31
+version: 0.0.32
 
 # Google-analytics (leave the id empty to keep the tag off)
 google-analytics:
