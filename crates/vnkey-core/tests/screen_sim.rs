@@ -105,8 +105,8 @@ fn no_keystroke_disappears_mid_sentence() {
 fn a_restored_word_reads_back_key_for_key() {
     for sequence in [
         "error", "hurry", "sorry", "carry", "arrow", "mirror", "possible", "address", "dorrs",
-        "hassf", "toanssf", "dorr", "dorrr", "dorrrr", "aaas", "aaaf", "phass", "phassr", "press",
-        "class", "assess", "pass", "moods", "goods", "food", "settings", "coffee", "toppings",
+        "hassf", "toanssf", "dorr", "dorrr", "dorrrr", "phass", "phassr", "press", "class",
+        "assess", "pass", "moods", "goods", "food", "settings", "coffee", "toppings",
     ] {
         assert_eq!(typed(InputMethod::Telex, sequence), sequence);
     }
@@ -163,18 +163,41 @@ fn a_press_after_an_undo_that_kept_a_composed_letter_types_one_character() {
 fn an_undo_that_leaves_nothing_composed_reads_the_keys_back() {
     for (method, seq, undo, word, undone) in [
         (InputMethod::Telex, "w", 'w', "ư", "ww"),
-        (InputMethod::Telex, "dd", 'd', "đ", "ddd"),
         (InputMethod::Telex, "phas", 's', "phá", "phass"),
         (InputMethod::Telex, "toans", 's', "toán", "toanss"),
         (InputMethod::Telex, "dor", 'r', "dỏ", "dorr"),
         (InputMethod::Vni, "pha1", '1', "phá", "pha11"),
-        (InputMethod::Vni, "a6", '6', "â", "a66"),
     ] {
         let mut screen = Screen::new(method);
         assert_eq!(screen.type_str(seq), word, "{method:?} {seq:?}");
         screen.press(undo);
         assert_eq!(screen.text, undone, "{method:?} {seq:?} then {undo:?}");
     }
+}
+
+#[test]
+fn a_restored_spelling_gives_both_keys_back() {
+    for (method, seq, undo, word, undone) in [
+        (InputMethod::Telex, "dd", 'd', "đ", "dd"),
+        (InputMethod::Telex, "ow", 'w', "ơ", "ow"),
+        (InputMethod::Telex, "uw", 'w', "ư", "uw"),
+        (InputMethod::Vni, "d9", '9', "đ", "d9"),
+        (InputMethod::Vni, "a6", '6', "â", "a6"),
+    ] {
+        let mut screen = Screen::new(method);
+        assert_eq!(screen.type_str(seq), word, "{method:?} {seq:?}");
+        screen.press(undo);
+        assert_eq!(screen.text, undone, "{method:?} {seq:?} then {undo:?}");
+    }
+}
+
+/// The key after a restored spelling types itself, rather than the display
+/// jumping back to the keys the restore already spent.
+#[test]
+fn a_key_after_a_restored_spelling_types_one_character() {
+    assert_eq!(typed(InputMethod::Telex, "aaas"), "aas");
+    assert_eq!(typed(InputMethod::Telex, "aaaf"), "aaf");
+    assert_eq!(typed(InputMethod::Telex, "dddo"), "ddo");
 }
 
 #[test]

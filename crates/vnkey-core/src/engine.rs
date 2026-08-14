@@ -146,7 +146,10 @@ impl Engine {
 
         if self.passthrough {
             return match &method_result.literal {
-                Some(literal) if !method_result.is_foreign && self.keeps_composed(literal) => {
+                Some(literal)
+                    if !method_result.is_foreign
+                        && (method_result.restored_spelling || self.keeps_composed(literal)) =>
+                {
                     let text = apply_case_mask(literal, &method_result.case_mask);
                     self.show(&text)
                 }

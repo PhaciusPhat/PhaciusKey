@@ -35,6 +35,7 @@ struct TelexState {
     is_foreign: bool,
     tone_applied: bool,
     cancelled: bool,
+    restored_spelling: bool,
     mask: Vec<bool>,
     // OpenKey STANDALONE_MASK.
     standalone_w: Option<usize>,
@@ -117,6 +118,7 @@ impl TelexState {
                     self.syllable = new_syl;
                     self.mask.push(ch.is_uppercase());
                     self.cancelled = true;
+                    self.restored_spelling = true;
                     return;
                 }
             }
@@ -163,6 +165,7 @@ impl TelexState {
             tone: self.tone,
             is_foreign: self.is_foreign,
             literal,
+            restored_spelling: self.restored_spelling,
             case_mask: self.mask,
         }
     }

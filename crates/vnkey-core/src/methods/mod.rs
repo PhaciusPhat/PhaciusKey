@@ -19,6 +19,10 @@ pub struct MethodResult {
     pub is_foreign: bool,
     /// Exact text when a key undid its own diacritic or tone ("aaa" → "aa"); `None` echoes raw.
     pub literal: Option<String>,
+    /// True when a key put back the two that spell a diacritic — `ddd` → `dd`,
+    /// `oww` → `ow`. No English word triples a letter that way, so unlike a
+    /// cancelled tone this is never a word the typist meant to write.
+    pub restored_spelling: bool,
     /// Per-character uppercase mask for `bare` (and `literal`).
     pub case_mask: Vec<bool>,
 }

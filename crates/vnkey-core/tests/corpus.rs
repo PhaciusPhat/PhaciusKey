@@ -277,13 +277,25 @@ fn repeating_a_key_undoes_it_and_types_it() {
     assert_eq!(screen("ooo", 0), "oo");
 }
 
+/// The two keys that spell a diacritic are put back whole, whether or not what
+/// they leave could still start a Vietnamese word: "aaa" is "aa", so "ddd" is
+/// "dd". No English word triples a letter that way.
+#[test]
+fn a_restored_spelling_gives_both_keys_back() {
+    for (seq, want) in [("ddd", "dd"), ("oww", "ow"), ("uww", "uw"), ("aww", "aw")] {
+        assert_eq!(screen(seq, 0), want, "telex {seq:?}");
+    }
+    for (seq, want) in [("a66", "a6"), ("d99", "d9"), ("o77", "o7")] {
+        assert_eq!(screen_vni(seq), want, "vni {seq:?}");
+    }
+}
+
+/// A cancelled tone is not a restored spelling: the key it spends is one an
+/// English word may need, so the word still reads back as it was typed.
 #[test]
 fn an_undo_that_leaves_no_vietnamese_word_reads_back_key_for_key() {
-    for seq in ["ddd", "oww", "ass"] {
+    for seq in ["ass", "www", "dorr", "phass"] {
         assert_eq!(screen(seq, 0), seq);
-    }
-    for seq in ["a66", "d99"] {
-        assert_eq!(screen_vni(seq), seq);
     }
 }
 
