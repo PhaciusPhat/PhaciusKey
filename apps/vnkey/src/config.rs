@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use vnkey_core::{Config as CoreConfig, InputMethod, TonePlacementMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,9 +88,11 @@ impl Settings {
             return Self::default();
         };
 
-        let settings = toml::from_str::<Self>(&text)
-            .unwrap_or_default()
-            .migrated(own_name);
+        let Some(parsed) = Self::parse(&text, &path) else {
+            return Self::default();
+        };
+
+        let settings = parsed.migrated(own_name);
 
         // Retired keys survive in the file until something rewrites it, and
         // nothing need ever change in a session. Settle it at startup instead.
@@ -98,6 +100,25 @@ impl Settings {
             settings.save();
         }
         settings
+    }
+
+    /// The settings a stored file describes, or `None` when it cannot be read.
+    ///
+    /// `None` is not "start again": the caller must leave the file alone. Both
+    /// returning the defaults *and* rewriting the file, as `load` once did,
+    /// turned a single key this build could not read into the permanent loss of
+    /// every setting the user had.
+    fn parse(text: &str, path: &Path) -> Option<Self> {
+        match toml::from_str::<Self>(text) {
+            Ok(parsed) => Some(parsed),
+            Err(e) => {
+                eprintln!(
+                    "[vnkey] leaving {} untouched, it did not parse: {e}",
+                    path.display()
+                );
+                None
+            }
+        }
     }
 
     /// Our own name is dropped rather than carried over: until 0.0.23 the
@@ -574,6 +595,48 @@ mod tests {
             ),
             None
         );
+    }
+
+    fn parse(text: &str) -> Option<Settings> {
+        Settings::parse(text, Path::new("/tmp/does-not-exist.toml"))
+    }
+
+    /// An update adds keys; a file written before them describes every setting
+    /// it does carry, and those must survive.
+    #[test]
+    fn a_file_from_an_older_build_keeps_the_settings_it_names() {
+        let older = r#"
+            enabled = false
+            method = "vni"
+            auto_restore = false
+            toggle_shortcut = "cmd+space"
+            disabled_apps = ["Terminal"]
+        "#;
+        let s = parse(older).expect("an older file should still parse");
+        assert!(!s.enabled);
+        assert_eq!(s.method, Method::Vni);
+        assert!(!s.auto_restore);
+        assert_eq!(s.toggle_shortcut, "cmd+space");
+        assert_eq!(s.disabled_apps, ["Terminal"]);
+        // A key it never heard of takes the default rather than resetting the rest.
+        assert!(s.show_in_dock);
+    }
+
+    #[test]
+    fn a_key_from_a_newer_build_does_not_discard_the_rest() {
+        let newer = r#"
+            enabled = false
+            some_setting_from_the_future = 42
+        "#;
+        let s = parse(newer).expect("an unknown key should be ignored");
+        assert!(!s.enabled);
+    }
+
+    /// The caller must not replace what it could not read.
+    #[test]
+    fn a_file_that_will_not_parse_is_refused_rather_than_replaced() {
+        assert!(parse("enabled = \"yes please\"").is_none());
+        assert!(parse("this is not toml at all {{{").is_none());
     }
 
     #[test]
