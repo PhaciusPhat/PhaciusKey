@@ -70,7 +70,7 @@ impl Default for Config {
 }
 
 /// A single keystroke delivered to the engine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Keystroke {
     /// The Unicode character produced by the key.
     pub ch: char,

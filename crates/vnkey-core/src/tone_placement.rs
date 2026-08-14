@@ -23,87 +23,82 @@ pub fn apply_tone(word: &str, tone: Tone, mode: TonePlacementMode) -> Cow<'_, st
     }
 }
 
-fn tone_position(chars: &[char], mode: TonePlacementMode) -> Option<usize> {
-    let mut vowel_indices: Vec<usize> = chars
+fn vowel_indices(
+    chars: &[char],
+    skip: Option<usize>,
+) -> impl DoubleEndedIterator<Item = usize> + Clone + '_ {
+    chars
         .iter()
         .enumerate()
         .filter(|(_, &c)| is_vowel(c))
         .map(|(i, _)| i)
-        .collect();
+        .filter(move |&i| Some(i) != skip)
+}
 
-    if vowel_indices.is_empty() {
-        return None;
-    }
+fn tone_position(chars: &[char], mode: TonePlacementMode) -> Option<usize> {
+    vowel_indices(chars, None).next()?;
 
     let glide_onset = matches!(
         (chars.first(), chars.get(1)),
         (Some('g'), Some('i')) | (Some('q'), Some('u'))
     );
-    if glide_onset && vowel_indices.len() > 1 && vowel_indices.contains(&1) {
-        vowel_indices.retain(|&i| i != 1);
-    }
+    let skip = (glide_onset && vowel_indices(chars, None).nth(1).is_some()).then_some(1);
+    let vowels = vowel_indices(chars, skip);
 
     let horn_cluster = chars
         .windows(2)
         .any(|w| w[0] == 'ư' && matches!(w[1], 'ơ' | 'o'));
     if horn_cluster {
-        for &vi in &vowel_indices {
-            if matches!(chars[vi], 'ơ' | 'ô') {
-                return Some(vi);
-            }
-        }
-    }
-    for &vi in &vowel_indices {
-        if matches!(chars[vi], 'â' | 'ê' | 'ô' | 'ă' | 'ơ' | 'ư') {
+        if let Some(vi) = vowels.clone().find(|&vi| matches!(chars[vi], 'ơ' | 'ô')) {
             return Some(vi);
         }
+    }
+    if let Some(vi) = vowels
+        .clone()
+        .find(|&vi| matches!(chars[vi], 'â' | 'ê' | 'ô' | 'ă' | 'ơ' | 'ư'))
+    {
+        return Some(vi);
     }
 
     let coda_start = coda_start_index(chars);
 
     match mode {
-        TonePlacementMode::Modern => modern_position(&vowel_indices, coda_start, chars),
-        TonePlacementMode::Classic => classic_position(&vowel_indices, coda_start, chars),
+        TonePlacementMode::Modern => modern_position(vowels, coda_start),
+        TonePlacementMode::Classic => classic_position(vowels, coda_start, chars),
     }
 }
 
 fn modern_position(
-    vowel_indices: &[usize],
+    vowels: impl DoubleEndedIterator<Item = usize> + Clone,
     coda_start: Option<usize>,
-    _chars: &[char],
 ) -> Option<usize> {
     if let Some(cs) = coda_start {
-        return vowel_indices
-            .iter()
-            .copied()
-            .rfind(|&i| i < cs)
-            .or_else(|| vowel_indices.last().copied());
+        return vowels.clone().rfind(|&i| i < cs).or_else(|| vowels.last());
     }
 
-    if vowel_indices.len() >= 2 {
-        Some(vowel_indices[vowel_indices.len() - 2])
-    } else {
-        vowel_indices.last().copied()
-    }
+    let mut back = vowels.rev();
+    let last = back.next();
+    back.next().or(last)
 }
 
 fn classic_position(
-    vowel_indices: &[usize],
+    vowels: impl DoubleEndedIterator<Item = usize> + Clone,
     coda_start: Option<usize>,
     chars: &[char],
 ) -> Option<usize> {
-    if coda_start.is_none() && vowel_indices.len() == 2 {
-        let first = chars.get(vowel_indices[0]).copied();
-        let second = chars.get(vowel_indices[1]).copied();
-        let glide_pair = matches!(
-            (first, second),
-            (Some('o'), Some('a')) | (Some('o'), Some('e')) | (Some('u'), Some('y'))
-        );
-        if glide_pair {
-            return Some(vowel_indices[1]);
+    if coda_start.is_none() {
+        let mut pair = vowels.clone();
+        if let (Some(first), Some(second), None) = (pair.next(), pair.next(), pair.next()) {
+            let glide_pair = matches!(
+                (chars.get(first), chars.get(second)),
+                (Some('o'), Some('a')) | (Some('o'), Some('e')) | (Some('u'), Some('y'))
+            );
+            if glide_pair {
+                return Some(second);
+            }
         }
     }
-    modern_position(vowel_indices, coda_start, chars)
+    modern_position(vowels, coda_start)
 }
 
 fn coda_start_index(chars: &[char]) -> Option<usize> {
@@ -120,9 +115,7 @@ fn coda_start_index(chars: &[char]) -> Option<usize> {
 }
 
 fn is_vowel(c: char) -> bool {
-    base_vowel(c)
-        .map(is_base_vowel)
-        .unwrap_or_else(|| is_base_vowel(c))
+    is_base_vowel(base_vowel(c).unwrap_or(c))
 }
 
 fn is_base_vowel(c: char) -> bool {
