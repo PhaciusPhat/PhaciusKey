@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use vnkey_core::{Config as CoreConfig, InputMethod, TonePlacementMode};
 
@@ -176,13 +176,13 @@ impl Settings {
             },
             enabled: self.vietnamese_on(app),
             auto_restore: self.auto_restore,
-            macros: match self.macros_enabled {
-                true => self
-                    .macros
+            macros: if self.macros_enabled {
+                self.macros
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-                false => Default::default(),
+                    .collect()
+            } else {
+                HashMap::new()
             },
             standalone_w: self.standalone_w,
             quick_telex: self.quick_telex,
@@ -313,13 +313,16 @@ pub fn merge_macros(
     outcome
 }
 
-pub fn shortcut_from_event(
-    ctrl: bool,
-    alt: bool,
-    shift: bool,
-    cmd: bool,
-    code: Option<&str>,
-) -> Option<String> {
+/// The modifier keys held down when a shortcut is recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modifiers {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub cmd: bool,
+}
+
+pub fn shortcut_from_event(mods: Modifiers, code: Option<&str>) -> Option<String> {
     let key = match code {
         Some(code) => Some(match code.as_bytes() {
             [b'K', b'e', b'y', c] if c.is_ascii_uppercase() => c.to_ascii_lowercase() as char,
@@ -330,13 +333,20 @@ pub fn shortcut_from_event(
         None => None,
     };
 
-    let held = [ctrl, alt, shift, cmd].into_iter().filter(|h| *h).count();
+    let named = [
+        (mods.ctrl, "ctrl"),
+        (mods.alt, "alt"),
+        (mods.shift, "shift"),
+        (mods.cmd, "cmd"),
+    ];
+
+    let held = named.iter().filter(|(held, _)| *held).count();
     if !modifiers_fit(held, key) {
         return None;
     }
 
     let mut parts: Vec<&str> = Vec::new();
-    for (held, name) in [(ctrl, "ctrl"), (alt, "alt"), (shift, "shift"), (cmd, "cmd")] {
+    for (held, name) in named {
         if held {
             parts.push(name);
         }
@@ -529,11 +539,39 @@ mod tests {
     #[test]
     fn a_recorded_release_becomes_a_modifier_only_shortcut() {
         assert_eq!(
-            shortcut_from_event(true, false, true, false, None).as_deref(),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..Modifiers::default()
+                },
+                None
+            )
+            .as_deref(),
             Some("ctrl+shift")
         );
-        assert_eq!(shortcut_from_event(true, false, false, false, None), None);
-        assert_eq!(shortcut_from_event(true, true, true, true, None), None);
+        assert_eq!(
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                },
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    alt: true,
+                    shift: true,
+                    cmd: true
+                },
+                None
+            ),
+            None
+        );
     }
 
     #[test]
@@ -712,15 +750,37 @@ mod tests {
     #[test]
     fn a_recorded_key_press_becomes_a_canonical_shortcut() {
         assert_eq!(
-            shortcut_from_event(true, false, true, false, Some("KeyV")).as_deref(),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    shift: true,
+                    ..Modifiers::default()
+                },
+                Some("KeyV")
+            )
+            .as_deref(),
             Some("ctrl+shift+v")
         );
         assert_eq!(
-            shortcut_from_event(false, false, false, true, Some("Space")).as_deref(),
+            shortcut_from_event(
+                Modifiers {
+                    cmd: true,
+                    ..Modifiers::default()
+                },
+                Some("Space")
+            )
+            .as_deref(),
             Some("cmd+space")
         );
         assert_eq!(
-            shortcut_from_event(false, true, false, false, Some("Digit1")).as_deref(),
+            shortcut_from_event(
+                Modifiers {
+                    alt: true,
+                    ..Modifiers::default()
+                },
+                Some("Digit1")
+            )
+            .as_deref(),
             Some("alt+1")
         );
     }
@@ -728,7 +788,7 @@ mod tests {
     #[test]
     fn a_recorded_combination_needs_a_modifier() {
         assert_eq!(
-            shortcut_from_event(false, false, false, false, Some("KeyV")),
+            shortcut_from_event(Modifiers::default(), Some("KeyV")),
             None
         );
     }
@@ -736,15 +796,39 @@ mod tests {
     #[test]
     fn a_recorded_combination_stops_at_three_keys() {
         assert_eq!(
-            shortcut_from_event(true, true, false, false, Some("KeyV")).as_deref(),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    alt: true,
+                    ..Modifiers::default()
+                },
+                Some("KeyV")
+            )
+            .as_deref(),
             Some("ctrl+alt+v")
         );
         assert_eq!(
-            shortcut_from_event(true, true, true, false, Some("KeyV")),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    alt: true,
+                    shift: true,
+                    ..Modifiers::default()
+                },
+                Some("KeyV")
+            ),
             None
         );
         assert_eq!(
-            shortcut_from_event(true, true, true, true, Some("KeyV")),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    alt: true,
+                    shift: true,
+                    cmd: true
+                },
+                Some("KeyV")
+            ),
             None
         );
     }
@@ -752,15 +836,33 @@ mod tests {
     #[test]
     fn keys_the_hook_cannot_match_are_refused() {
         assert_eq!(
-            shortcut_from_event(true, false, false, false, Some("F5")),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                },
+                Some("F5")
+            ),
             None
         );
         assert_eq!(
-            shortcut_from_event(true, false, false, false, Some("Slash")),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                },
+                Some("Slash")
+            ),
             None
         );
         assert_eq!(
-            shortcut_from_event(true, false, false, false, Some("Enter")),
+            shortcut_from_event(
+                Modifiers {
+                    ctrl: true,
+                    ..Modifiers::default()
+                },
+                Some("Enter")
+            ),
             None
         );
     }
@@ -777,8 +879,16 @@ mod tests {
         ];
         for code in ["KeyA", "KeyZ", "Digit0", "Digit9", "Space"] {
             for (ctrl, alt, shift, cmd) in combinations {
-                let recorded = shortcut_from_event(ctrl, alt, shift, cmd, Some(code))
-                    .unwrap_or_else(|| panic!("{code} should record"));
+                let recorded = shortcut_from_event(
+                    Modifiers {
+                        ctrl,
+                        alt,
+                        shift,
+                        cmd,
+                    },
+                    Some(code),
+                )
+                .unwrap_or_else(|| panic!("{code} should record"));
                 assert!(
                     parse_shortcut(&recorded).is_some(),
                     "{recorded} should parse"

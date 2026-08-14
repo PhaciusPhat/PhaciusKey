@@ -192,7 +192,7 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
                 }
             },
             Event::UserEvent(UserEvent::StateChanged) => {
-                push_state(&tray, &settings_win, &panel);
+                push_state(tray.as_ref(), settings_win.as_ref(), panel.as_ref());
             }
             Event::UserEvent(UserEvent::Ipc(surface, msg)) => {
                 match ui::apply_ipc(&msg) {
@@ -251,7 +251,7 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
                     Some(WindowAction::Quit) => *control_flow = ControlFlow::Exit,
                     None => {}
                 }
-                push_state(&tray, &settings_win, &panel);
+                push_state(tray.as_ref(), settings_win.as_ref(), panel.as_ref());
             }
             Event::WindowEvent {
                 event: tao::event::WindowEvent::CloseRequested,
@@ -331,7 +331,7 @@ fn run(event_loop: EventLoop<UserEvent>, forced_alert: Option<update::Notice>) -
 
 /// Every surface renders the same state, so they are all refreshed together
 /// rather than each one being remembered at each call site.
-fn push_state(tray: &Option<Tray>, settings_win: &Option<SettingsWindow>, panel: &Option<Panel>) {
+fn push_state(tray: Option<&Tray>, settings_win: Option<&SettingsWindow>, panel: Option<&Panel>) {
     if let Some(tray) = tray {
         tray.refresh(state::current_app().as_deref());
     }

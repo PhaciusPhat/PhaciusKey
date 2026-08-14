@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::config::{
     macro_export_json, merge_macros, parse_macro_export, shortcut_from_event, valid_macro_trigger,
-    Method, Placement, Settings,
+    Method, Modifiers, Placement, Settings,
 };
 use crate::{autostart, state, update};
 
@@ -139,7 +139,15 @@ pub fn apply_ipc(msg: &str) -> Option<WindowAction> {
             shift,
             meta,
         } => {
-            if let Some(shortcut) = shortcut_from_event(ctrl, alt, shift, meta, code.as_deref()) {
+            if let Some(shortcut) = shortcut_from_event(
+                Modifiers {
+                    ctrl,
+                    alt,
+                    shift,
+                    cmd: meta,
+                },
+                code.as_deref(),
+            ) {
                 state::update(move |s| s.toggle_shortcut = shortcut);
             }
         }

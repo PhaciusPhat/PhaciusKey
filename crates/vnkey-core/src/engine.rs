@@ -120,9 +120,8 @@ impl Engine {
             InputMethod::Vni => VniMethod.process(raw, &self.config),
         };
 
-        let method_result = match result {
-            Some(r) => r,
-            None => return vec![],
+        let Some(method_result) = result else {
+            return vec![];
         };
 
         let bare = &method_result.bare;
@@ -257,9 +256,9 @@ impl Engine {
 
         let mut expanded = false;
         if let Some(expansion) = self.config.macros.get(&self.buffer.displayed) {
-            let shown = self.buffer.displayed.chars().count();
-            if shown > 0 && shown <= u8::MAX as usize && *expansion != self.buffer.displayed {
-                actions.push(EditAction::Backspace(shown as u8));
+            let shown = u8::try_from(self.buffer.displayed.chars().count()).unwrap_or(0);
+            if shown > 0 && *expansion != self.buffer.displayed {
+                actions.push(EditAction::Backspace(shown));
                 actions.push(EditAction::Insert(expansion.clone()));
                 expanded = true;
             }
