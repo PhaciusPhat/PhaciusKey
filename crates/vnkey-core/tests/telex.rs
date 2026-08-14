@@ -171,12 +171,10 @@ fn standalone_w_stays_a_letter_where_u_horn_cannot_follow() {
     assert_eq!(displayed_after("nghw"), "nghw");
 }
 
-/// A standalone "w" stands for no pair of keys, so undoing it restores nothing
-/// to put back and the word reads as typed — which is what keeps "www" whole.
 #[test]
-fn a_second_w_reads_the_keys_back() {
-    assert_eq!(displayed_after("ww"), "ww");
-    assert_eq!(displayed_after("www"), "www");
+fn a_second_w_gives_the_letter_back() {
+    assert_eq!(displayed_after("ww"), "w");
+    assert_eq!(displayed_after("www"), "ww");
 }
 
 #[test]
@@ -190,7 +188,7 @@ fn standalone_w_keeps_the_typed_case() {
     assert_eq!(displayed_after("W"), "Ư");
     assert_eq!(displayed_after("Thw"), "Thư");
     assert_eq!(displayed_after("THW"), "THƯ");
-    assert_eq!(displayed_after("Ww"), "Ww");
+    assert_eq!(displayed_after("Ww"), "w");
 }
 
 #[test]

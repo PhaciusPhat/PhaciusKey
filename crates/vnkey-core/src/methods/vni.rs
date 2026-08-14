@@ -18,7 +18,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
     let mut mask: Vec<bool> = Vec::new();
     let mut tone = Tone::Flat;
     let mut cancelled = false;
-    let mut restored_spelling = false;
 
     for ch in raw.chars() {
         let tone_digit = match ch {
@@ -51,11 +50,16 @@ pub fn process_vni(raw: &str) -> MethodResult {
             continue;
         }
 
+        if cancelled {
+            syllable.push(ch.to_lowercase().next().unwrap_or(ch));
+            mask.push(ch.is_uppercase());
+            continue;
+        }
+
         match ch {
             '6' => {
                 if undo_diacritic(&mut syllable, &['â', 'ê', 'ô']) {
                     cancelled = true;
-                    restored_spelling = true;
                     syllable.push(ch);
                     mask.push(false);
                 } else if !apply_circumflex(&mut syllable) {
@@ -66,7 +70,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
             '7' => {
                 if undo_diacritic(&mut syllable, &['ư', 'ơ']) {
                     cancelled = true;
-                    restored_spelling = true;
                     syllable.push(ch);
                     mask.push(false);
                 } else if !apply_horn(&mut syllable) {
@@ -77,7 +80,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
             '8' => {
                 if undo_diacritic(&mut syllable, &['ă']) {
                     cancelled = true;
-                    restored_spelling = true;
                     syllable.push(ch);
                     mask.push(false);
                 } else if !apply_breve(&mut syllable) {
@@ -89,7 +91,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
                 if syllable.starts_with('đ') {
                     syllable.replace_range(..'đ'.len_utf8(), "d");
                     cancelled = true;
-                    restored_spelling = true;
                     syllable.push(ch);
                     mask.push(false);
                 } else if !apply_stroke_d(&mut syllable) {
@@ -110,7 +111,6 @@ pub fn process_vni(raw: &str) -> MethodResult {
         tone,
         is_foreign: false,
         literal,
-        restored_spelling,
         case_mask: mask,
     }
 }

@@ -8,6 +8,9 @@ pub struct Engine {
     buffer: CompositionBuffer,
     config: Config,
     passthrough: bool,
+    /// The typist asked for the raw keys back with Esc; from then on the word is
+    /// what they pressed, and a later undo does not get to compose it again.
+    restored: bool,
     history: Vec<CommittedWord>,
     pending_sentence_end: bool,
     capitalize_next: bool,
@@ -17,6 +20,7 @@ struct CommittedWord {
     raw: String,
     displayed: String,
     passthrough: bool,
+    restored: bool,
     boundaries: usize,
 }
 
@@ -28,6 +32,7 @@ impl Engine {
             buffer: CompositionBuffer::new(),
             config,
             passthrough: false,
+            restored: false,
             history: Vec::new(),
             pending_sentence_end: false,
             capitalize_next: false,
@@ -99,6 +104,7 @@ impl Engine {
                 self.buffer.raw = word.raw;
                 self.buffer.displayed = word.displayed;
                 self.passthrough = word.passthrough;
+                self.restored = word.restored;
             }
             return vec![];
         }
@@ -113,6 +119,7 @@ impl Engine {
             InputMethod::Vni => crate::methods::vni::encode_vni(&target),
         };
         self.passthrough = false;
+        self.restored = false;
         actions
     }
 
@@ -146,10 +153,7 @@ impl Engine {
 
         if self.passthrough {
             return match &method_result.literal {
-                Some(literal)
-                    if !method_result.is_foreign
-                        && (method_result.restored_spelling || self.keeps_composed(literal)) =>
-                {
+                Some(literal) if !self.restored && !method_result.is_foreign => {
                     let text = apply_case_mask(literal, &method_result.case_mask);
                     self.show(&text)
                 }
@@ -166,10 +170,6 @@ impl Engine {
         let target = apply_case_mask(&target, &method_result.case_mask);
 
         self.show(&target)
-    }
-
-    fn keeps_composed(&self, literal: &str) -> bool {
-        self.buffer.displayed.chars().any(is_composed) && literal.chars().any(is_composed)
     }
 
     fn syllable_possible(&self, bare: &str) -> bool {
@@ -301,6 +301,7 @@ impl Engine {
                 raw: self.buffer.raw.clone(),
                 displayed: self.buffer.displayed.clone(),
                 passthrough: self.passthrough,
+                restored: self.restored,
                 boundaries: 1,
             });
         }
@@ -329,6 +330,7 @@ impl Engine {
 
         self.buffer.reset();
         self.passthrough = false;
+        self.restored = false;
 
         if let Some(ch) = extra_char {
             if ch != '\0' {
@@ -349,6 +351,7 @@ impl Engine {
         }
         let raw = self.buffer.raw.clone();
         self.passthrough = true;
+        self.restored = true;
         self.buffer.diff_to(&raw)
     }
 
@@ -356,6 +359,7 @@ impl Engine {
     pub fn reset(&mut self) {
         self.buffer.reset();
         self.passthrough = false;
+        self.restored = false;
         self.history.clear();
         self.pending_sentence_end = false;
         self.capitalize_next = false;
@@ -414,14 +418,6 @@ fn is_vowel(ch: char) -> bool {
 /// at all: the shell must leave the real key event alone.
 fn retypes_only(actions: &[EditAction], ch: char) -> bool {
     matches!(actions, [EditAction::Insert(text)] if text.chars().eq([ch]))
-}
-
-/// A letter both methods spell with two keys — `aa`, `ow`, `dd`, `a6`, `d9`. A
-/// tone is one key, so a tone mark is not one of these.
-fn is_composed(ch: char) -> bool {
-    let lower = lower(ch);
-    let base = base_vowel(lower).unwrap_or(lower);
-    matches!(base, 'â' | 'ă' | 'ê' | 'ô' | 'ơ' | 'ư' | 'đ')
 }
 
 /// A Vietnamese word is letters, and VNI spells its tones with digits, so
@@ -639,7 +635,7 @@ mod tests {
         assert!(e.backspace().is_empty());
         assert_eq!(e.buffer.displayed, "há");
         type_str(&mut e, "s");
-        assert_eq!(e.buffer.displayed, "hass");
+        assert_eq!(e.buffer.displayed, "has");
     }
 
     #[test]

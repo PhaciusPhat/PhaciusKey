@@ -35,7 +35,6 @@ struct TelexState {
     is_foreign: bool,
     tone_applied: bool,
     cancelled: bool,
-    restored_spelling: bool,
     mask: Vec<bool>,
     // OpenKey STANDALONE_MASK.
     standalone_w: Option<usize>,
@@ -53,6 +52,14 @@ impl TelexState {
 
     fn push_key(&mut self, ch: char) {
         let lower = ch.to_lowercase().next().unwrap_or(ch);
+
+        // Once a key has undone its own tone the word is the keys themselves,
+        // so nothing later composes: "arrow" is "arow", never "arơ".
+        if self.cancelled {
+            self.syllable.push(lower);
+            self.mask.push(ch.is_uppercase());
+            return;
+        }
 
         if self.quick_telex_enabled {
             if let Some(completion) = quick_telex_completion(&self.syllable, lower) {
@@ -118,7 +125,6 @@ impl TelexState {
                     self.syllable = new_syl;
                     self.mask.push(ch.is_uppercase());
                     self.cancelled = true;
-                    self.restored_spelling = true;
                     return;
                 }
             }
@@ -165,7 +171,6 @@ impl TelexState {
             tone: self.tone,
             is_foreign: self.is_foreign,
             literal,
-            restored_spelling: self.restored_spelling,
             case_mask: self.mask,
         }
     }

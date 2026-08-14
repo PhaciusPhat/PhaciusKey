@@ -99,31 +99,23 @@ fn no_keystroke_disappears_mid_sentence() {
     }
 }
 
-/// A word the engine has given up on reads back exactly as it was typed, which
-/// is what lets an English word through whole.
+/// A word the engine gives up on without any key having undone itself reads
+/// back exactly as typed, which is what lets an English word through whole.
 #[test]
 fn a_restored_word_reads_back_key_for_key() {
-    for sequence in [
-        "error", "hurry", "sorry", "carry", "arrow", "mirror", "possible", "address", "dorrs",
-        "hassf", "toanssf", "dorr", "dorrr", "dorrrr", "phass", "phassr", "press", "class",
-        "assess", "pass", "moods", "goods", "food", "settings", "coffee", "toppings",
-    ] {
+    for sequence in ["address", "moods", "goods", "food", "settings", "toppings"] {
         assert_eq!(typed(InputMethod::Telex, sequence), sequence);
-    }
-    for sequence in ["do33", "do333"] {
-        assert_eq!(typed(InputMethod::Vni, sequence), sequence);
     }
 }
 
-/// Pressing a tone key twice takes the tone off, and the word that is left is
-/// not Vietnamese: it reads back key for key from that press on, so no later
-/// press has to put back the key the tone rule spent along with itself.
+/// Every press inside a word an undo has made literal is worth exactly one
+/// character, the undo's own press included.
 #[test]
 fn a_press_after_an_undone_tone_types_one_character() {
     let mut screen = Screen::new(InputMethod::Telex);
     assert_eq!(screen.type_str("phas"), "phá");
-    assert_eq!(screen.type_str("s"), "phass");
-    assert_eq!(screen.type_str("r"), "phassr");
+    assert_eq!(screen.type_str("s"), "phas");
+    assert_eq!(screen.type_str("r"), "phasr");
 }
 
 #[test]
@@ -160,13 +152,16 @@ fn a_press_after_an_undo_that_kept_a_composed_letter_types_one_character() {
 }
 
 #[test]
-fn an_undo_that_leaves_nothing_composed_reads_the_keys_back() {
+fn an_undo_types_its_key_once_whatever_it_leaves() {
     for (method, seq, undo, word, undone) in [
-        (InputMethod::Telex, "w", 'w', "ư", "ww"),
-        (InputMethod::Telex, "phas", 's', "phá", "phass"),
-        (InputMethod::Telex, "toans", 's', "toán", "toanss"),
-        (InputMethod::Telex, "dor", 'r', "dỏ", "dorr"),
-        (InputMethod::Vni, "pha1", '1', "phá", "pha11"),
+        (InputMethod::Telex, "w", 'w', "ư", "w"),
+        (InputMethod::Telex, "phas", 's', "phá", "phas"),
+        (InputMethod::Telex, "toans", 's', "toán", "toans"),
+        (InputMethod::Telex, "dor", 'r', "dỏ", "dor"),
+        (InputMethod::Telex, "does", 's', "dóe", "does"),
+        (InputMethod::Telex, "bos", 's', "bó", "bos"),
+        (InputMethod::Vni, "pha1", '1', "phá", "pha1"),
+        (InputMethod::Vni, "do1", '1', "dó", "do1"),
     ] {
         let mut screen = Screen::new(method);
         assert_eq!(screen.type_str(seq), word, "{method:?} {seq:?}");
@@ -205,8 +200,8 @@ fn an_undo_keeps_the_case_the_word_was_typed_in() {
     assert_eq!(typed(InputMethod::Telex, "Ddoanss"), "Đoans");
     assert_eq!(typed(InputMethod::Telex, "DDOANSS"), "ĐOANS");
     assert_eq!(typed(InputMethod::Telex, "VIEETJJ"), "VIÊTJ");
-    assert_eq!(typed(InputMethod::Telex, "HaSS"), "HaSS");
-    assert_eq!(typed(InputMethod::Telex, "Ww"), "Ww");
+    assert_eq!(typed(InputMethod::Telex, "HaSS"), "HaS");
+    assert_eq!(typed(InputMethod::Telex, "Ww"), "w");
 }
 
 const ADDRESSES: &[&str] = &[

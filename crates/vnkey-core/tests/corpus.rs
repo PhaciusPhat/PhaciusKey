@@ -113,9 +113,8 @@ fn vni_diacritics_and_tones() {
 #[test]
 fn english_words_are_returned_verbatim() {
     for word in [
-        "jira", "student", "the", "file", "first", "result", "server", "java", "press", "sort",
-        "fix", "text", "react", "script", "string", "user", "error", "start", "stop", "reset",
-        "forest", "just",
+        "jira", "student", "the", "file", "first", "result", "server", "java", "sort", "fix",
+        "text", "react", "script", "string", "user", "start", "stop", "reset", "forest", "just",
     ] {
         assert_eq!(telex(word), word, "expected {word:?} to survive untouched");
     }
@@ -290,13 +289,48 @@ fn a_restored_spelling_gives_both_keys_back() {
     }
 }
 
-/// A cancelled tone is not a restored spelling: the key it spends is one an
-/// English word may need, so the word still reads back as it was typed.
+/// A key that undoes its own tone spends one press and types itself once,
+/// whatever it leaves behind — the word is the keys from that press on.
 #[test]
-fn an_undo_that_leaves_no_vietnamese_word_reads_back_key_for_key() {
-    for seq in ["ass", "www", "dorr", "phass"] {
-        assert_eq!(screen(seq, 0), seq);
+fn an_undo_spends_one_press_and_types_the_key_once() {
+    for (seq, want) in [
+        ("doess", "does"),
+        ("boss", "bos"),
+        ("ass", "as"),
+        ("dorr", "dor"),
+        ("phass", "phas"),
+        ("www", "ww"),
+        ("arrow", "arow"),
+    ] {
+        assert_eq!(screen(seq, 0), want, "telex {seq:?}");
     }
+    for (seq, want) in [("do11", "do1"), ("d9oan11", "đoan1"), ("pha11", "pha1")] {
+        assert_eq!(screen_vni(seq), want, "vni {seq:?}");
+    }
+}
+
+/// Which is how an English word that really doubles the letter is typed: press
+/// it once more. Nothing is added on the typist's behalf.
+#[test]
+fn a_doubled_letter_is_had_by_pressing_the_key_again() {
+    for (seq, want) in [
+        ("passs", "pass"),
+        ("misss", "miss"),
+        ("lesss", "less"),
+        ("offf", "off"),
+        ("presss", "press"),
+        ("errror", "error"),
+    ] {
+        assert_eq!(screen(seq, 0), want, "telex {seq:?}");
+    }
+}
+
+/// Nothing composes after the undo either, or the keys would be rewritten into
+/// a Vietnamese word the typist never asked for.
+#[test]
+fn nothing_composes_after_an_undo() {
+    assert_eq!(screen("arrow", 0), "arow");
+    assert_eq!(screen("coffee", 0), "cofee");
 }
 
 #[test]
