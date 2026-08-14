@@ -77,24 +77,24 @@ impl Tray {
     }
 }
 
+type Rgb = (f32, f32, f32);
+
+/// The menu bar draws the icon straight onto the wallpaper, where a tint of its
+/// own competes with whatever is behind it; the exported iconset sits on
+/// Finder's own background instead, and keeps the app's colour.
+const MENU_BAR: Rgb = (255.0, 255.0, 255.0);
+const APP_ICON: Rgb = (52.0, 199.0, 89.0);
+
 fn status_icon(enabled: bool) -> Option<Icon> {
-    let rgba = render_rgba(36, enabled);
+    let rgba = render_rgba(36, enabled, MENU_BAR);
     Icon::from_rgba(rgba, 36, 36).ok()
 }
 
-type Rgb = (f32, f32, f32);
-
-pub(crate) fn render_rgba(size: usize, enabled: bool) -> Vec<u8> {
+pub(crate) fn render_rgba(size: usize, enabled: bool, color: Rgb) -> Vec<u8> {
     const SS: usize = 4;
     let big = size * SS;
     let n = big * big;
     let big_f = big as f32;
-
-    let color: Rgb = if enabled {
-        (52.0, 199.0, 89.0)
-    } else {
-        (255.0, 59.0, 48.0)
-    };
 
     let mut cov = vec![0f32; n];
     let hw = big_f * 0.075;
@@ -157,7 +157,7 @@ const ICONSET_SIZES: &[(&str, u32)] = &[
 pub(crate) fn export_iconset(dir: &Path) -> io::Result<()> {
     std::fs::create_dir_all(dir)?;
     for (name, size) in ICONSET_SIZES {
-        let rgba = render_rgba(*size as usize, true);
+        let rgba = render_rgba(*size as usize, true, APP_ICON);
         png_write::write_png(&dir.join(name), *size, &rgba)?;
     }
     Ok(())
