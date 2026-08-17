@@ -319,6 +319,8 @@ impl Engine {
                 if self.pending_sentence_end {
                     self.pending_sentence_end = false;
                     self.capitalize_next = true;
+                } else if !self.buffer.displayed.is_empty() {
+                    self.capitalize_next = false;
                 }
             }
             Some(_) => {
@@ -860,6 +862,18 @@ mod tests {
         e.process(Keystroke::char(' '));
         type_str(&mut e, "toi");
         assert_eq!(e.buffer.displayed, "Toi");
+    }
+
+    #[test]
+    fn a_word_after_the_capitalized_word_is_not_also_capitalized() {
+        let mut e = capitalizing_engine();
+        type_str(&mut e, "chaof");
+        e.process(Keystroke::char('.'));
+        e.process(Keystroke::char(' '));
+        type_str(&mut e, "toi");
+        e.process(Keystroke::char(' '));
+        type_str(&mut e, "la");
+        assert_eq!(e.buffer.displayed, "la");
     }
 
     #[test]
