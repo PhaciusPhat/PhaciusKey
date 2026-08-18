@@ -338,3 +338,23 @@ fn a_different_key_changes_rather_than_undoes() {
     assert_eq!(screen("asf", 0), "à");
     assert_eq!(screen_vni("a12"), "à");
 }
+
+#[test]
+fn a_vowel_key_spammed_past_the_word_keeps_the_tone_in_place() {
+    let mut engine = Engine::new(Config {
+        method: InputMethod::Telex,
+        placement: TonePlacementMode::Modern,
+        enabled: true,
+        auto_restore: false,
+        ..Default::default()
+    });
+    for ch in "bayf".chars() {
+        engine.process(Keystroke::char(ch));
+    }
+    assert_eq!(engine.current_displayed(), "bày");
+
+    for _ in 0..7 {
+        engine.process(Keystroke::char('y'));
+    }
+    assert_eq!(engine.current_displayed(), "bàyyyyyyyy");
+}

@@ -30,7 +30,7 @@ fn vowel_indices(
     chars
         .iter()
         .enumerate()
-        .filter(|(_, &c)| is_vowel(c))
+        .filter(|&(i, &c)| is_vowel(c) && (i == 0 || chars[i - 1] != c))
         .map(|(i, _)| i)
         .filter(move |&i| Some(i) != skip)
 }
@@ -245,6 +245,14 @@ mod tests {
     #[test]
     fn flat_tone_no_change() {
         assert_eq!(modern("ba", Tone::Flat), "ba");
+    }
+
+    #[test]
+    fn a_key_repeated_past_the_nucleus_does_not_move_the_tone() {
+        assert_eq!(modern("bay", Tone::Grave), "bày");
+        assert_eq!(modern("bayy", Tone::Grave), "bàyy");
+        assert_eq!(modern("bayyyyyyyy", Tone::Grave), "bàyyyyyyyy");
+        assert_eq!(modern("doiiiii", Tone::Grave), "dòiiiii");
     }
 
     #[test]
