@@ -6,7 +6,8 @@ pub use vni::VniMethod;
 
 use std::borrow::Cow;
 
-use crate::types::{Config, Tone};
+use crate::types::{Config, InputMethod, Tone};
+use crate::validator::{base_vowel, coda_of, is_valid_prefix, tone_allowed_with_coda};
 
 /// Result of processing the raw buffer through an input method.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +39,104 @@ pub fn apply_case_mask<'a>(text: &'a str, mask: &[bool]) -> Cow<'a, str> {
         }
     }
     Cow::Owned(out)
+}
+
+/// Whether a tone key may take effect on the syllable typed so far, rather than
+/// standing for the digit or letter it was typed as.
+pub fn tone_applies(syllable: &str, tone: Tone, config: &Config) -> bool {
+    syllable.chars().any(is_vowel)
+        && syllable_possible(syllable, config)
+        && tone_allowed_with_coda(tone, coda_of(syllable))
+}
+
+/// Whether `bare` can still grow into a Vietnamese syllable, counting the Telex
+/// consonant shorthands as the syllables they stand for.
+pub fn syllable_possible(bare: &str, config: &Config) -> bool {
+    is_valid_prefix(bare)
+        || expand_quick_consonants(bare, config).is_some_and(|e| is_valid_prefix(&e))
+}
+
+pub fn expand_quick_consonants(word: &str, config: &Config) -> Option<String> {
+    if config.method != InputMethod::Telex
+        || !(config.quick_start_consonant || config.quick_end_consonant)
+    {
+        return None;
+    }
+    let chars: Vec<char> = word.chars().collect();
+    if chars.len() < 2 {
+        return None;
+    }
+
+    let head = config
+        .quick_start_consonant
+        .then(|| start_consonant(lower(chars[0])))
+        .flatten()
+        .map(|(a, b)| {
+            let first = chars[0].is_uppercase();
+            [cased(a, first), cased(b, first && chars[1].is_uppercase())]
+        });
+
+    let last = chars[chars.len() - 1];
+    let tail = config
+        .quick_end_consonant
+        .then(|| is_vowel(chars[chars.len() - 2]).then(|| end_consonant(lower(last))))
+        .flatten()
+        .flatten()
+        .map(|(a, b)| {
+            let upper = last.is_uppercase();
+            [cased(a, upper), cased(b, upper)]
+        });
+
+    if head.is_none() && tail.is_none() {
+        return None;
+    }
+
+    let body = &chars[usize::from(head.is_some())..chars.len() - usize::from(tail.is_some())];
+    let mut out: String = head.into_iter().flatten().collect();
+    out.extend(body);
+    out.extend(tail.into_iter().flatten());
+    Some(out)
+}
+
+// OpenKey _quickStartConsonant.
+fn start_consonant(ch: char) -> Option<(char, char)> {
+    match ch {
+        'f' => Some(('p', 'h')),
+        'j' => Some(('g', 'i')),
+        'w' => Some(('q', 'u')),
+        _ => None,
+    }
+}
+
+// OpenKey _quickEndConsonant.
+fn end_consonant(ch: char) -> Option<(char, char)> {
+    match ch {
+        'g' => Some(('n', 'g')),
+        'h' => Some(('n', 'h')),
+        'k' => Some(('c', 'h')),
+        _ => None,
+    }
+}
+
+fn lower(ch: char) -> char {
+    ch.to_lowercase().next().unwrap_or(ch)
+}
+
+fn cased(ch: char, upper: bool) -> char {
+    if upper {
+        ch.to_uppercase().next().unwrap_or(ch)
+    } else {
+        ch
+    }
+}
+
+fn is_vowel(ch: char) -> bool {
+    let lower = lower(ch);
+    let base = base_vowel(lower).unwrap_or(lower);
+    matches!(
+        base,
+        'a' | 'â' | 'ă' | 'e' | 'ê' | 'i' | 'o' | 'ô' | 'ơ' | 'u' | 'ư' | 'y'
+    )
 }
 
 pub trait InputMethodProcessor {

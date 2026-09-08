@@ -1,4 +1,4 @@
-use super::{InputMethodProcessor, MethodResult};
+use super::{tone_applies, InputMethodProcessor, MethodResult};
 use crate::types::{Config, Tone};
 use crate::validator::is_valid_prefix;
 
@@ -16,9 +16,14 @@ impl InputMethodProcessor for TelexMethod {
 /// Process a raw Telex keystroke sequence into a bare syllable + tone.
 pub fn process_telex(raw: &str, config: &Config) -> MethodResult {
     let mut state = TelexState {
-        standalone_w_enabled: config.standalone_w,
-        quick_telex_enabled: config.quick_telex,
-        ..Default::default()
+        config,
+        syllable: String::new(),
+        tone: Tone::default(),
+        is_foreign: false,
+        tone_applied: false,
+        cancelled: false,
+        mask: Vec::new(),
+        standalone_w: None,
     };
     for ch in raw.chars() {
         state.push(ch);
@@ -26,10 +31,8 @@ pub fn process_telex(raw: &str, config: &Config) -> MethodResult {
     state.finish()
 }
 
-#[derive(Default)]
-struct TelexState {
-    standalone_w_enabled: bool,
-    quick_telex_enabled: bool,
+struct TelexState<'a> {
+    config: &'a Config,
     syllable: String,
     tone: Tone,
     is_foreign: bool,
@@ -40,7 +43,7 @@ struct TelexState {
     standalone_w: Option<usize>,
 }
 
-impl TelexState {
+impl TelexState<'_> {
     fn push(&mut self, ch: char) {
         self.push_key(ch);
         if let Some(pos) = self.standalone_w {
@@ -61,7 +64,7 @@ impl TelexState {
             return;
         }
 
-        if self.quick_telex_enabled {
+        if self.config.quick_telex {
             if let Some(completion) = quick_telex_completion(&self.syllable, lower) {
                 self.syllable.push(completion);
                 self.mask.push(ch.is_uppercase());
@@ -73,7 +76,7 @@ impl TelexState {
             let acts = if tone == Tone::Flat {
                 self.tone != Tone::Flat
             } else {
-                has_vowel(&self.syllable)
+                tone_applies(&self.syllable, tone, self.config)
             };
             if acts && !self.cancelled {
                 if self.tone == tone && tone != Tone::Flat {
@@ -137,7 +140,7 @@ impl TelexState {
             }
         }
 
-        if lower == 'w' && self.standalone_w_enabled && standalone_w_applies(&self.syllable) {
+        if lower == 'w' && self.config.standalone_w && standalone_w_applies(&self.syllable) {
             self.standalone_w = Some(self.syllable.chars().count());
             self.syllable.push('ư');
             self.mask.push(ch.is_uppercase());
@@ -345,10 +348,6 @@ fn standalone_w_applies(syllable: &str) -> bool {
         }
         _ => false,
     }
-}
-
-fn has_vowel(s: &str) -> bool {
-    s.chars().any(is_vowel)
 }
 
 fn is_vowel(c: char) -> bool {

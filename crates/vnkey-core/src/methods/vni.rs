@@ -1,19 +1,19 @@
-use super::{InputMethodProcessor, MethodResult};
+use super::{tone_applies, InputMethodProcessor, MethodResult};
 use crate::types::{Config, Tone};
 
 pub struct VniMethod;
 
 impl InputMethodProcessor for VniMethod {
-    fn process(&self, raw: &str, _config: &Config) -> Option<MethodResult> {
+    fn process(&self, raw: &str, config: &Config) -> Option<MethodResult> {
         if raw.is_empty() {
             return None;
         }
-        Some(process_vni(raw))
+        Some(process_vni(raw, config))
     }
 }
 
 /// Process a raw VNI keystroke sequence.
-pub fn process_vni(raw: &str) -> MethodResult {
+pub fn process_vni(raw: &str, config: &Config) -> MethodResult {
     let mut syllable = String::new();
     let mut mask: Vec<bool> = Vec::new();
     let mut tone = Tone::Flat;
@@ -34,7 +34,7 @@ pub fn process_vni(raw: &str) -> MethodResult {
             let acts = if new_tone == Tone::Flat {
                 tone != Tone::Flat
             } else {
-                has_vowel(&syllable)
+                tone_applies(&syllable, new_tone, config)
             };
             if !acts || cancelled {
                 syllable.push(ch);
@@ -198,10 +198,6 @@ fn is_vowel(c: char) -> bool {
     )
 }
 
-fn has_vowel(s: &str) -> bool {
-    s.chars().any(is_vowel)
-}
-
 fn apply_circumflex(s: &mut String) -> bool {
     replace_last_vowel(s, |c| match c {
         'a' => Some('â'),
@@ -267,7 +263,7 @@ mod tests {
     use crate::types::Tone;
 
     fn vni(s: &str) -> (String, Tone) {
-        let r = process_vni(s);
+        let r = process_vni(s, &Config::default());
         (r.bare, r.tone)
     }
 

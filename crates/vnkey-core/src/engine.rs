@@ -1,8 +1,11 @@
 use crate::buffer::CompositionBuffer;
-use crate::methods::{apply_case_mask, InputMethodProcessor, TelexMethod, VniMethod};
+use crate::methods::{
+    apply_case_mask, expand_quick_consonants, syllable_possible, InputMethodProcessor, TelexMethod,
+    VniMethod,
+};
 use crate::tone_placement::apply_tone;
 use crate::types::{Config, EditAction, InputMethod, Keystroke, Tone};
-use crate::validator::{base_vowel, coda_of, is_valid_prefix, tone_allowed_with_coda};
+use crate::validator::{coda_of, is_valid_prefix, tone_allowed_with_coda};
 
 pub struct Engine {
     buffer: CompositionBuffer,
@@ -143,7 +146,7 @@ impl Engine {
         let bare = &method_result.bare;
         let tone = method_result.tone;
 
-        let impossible = !self.syllable_possible(bare)
+        let impossible = !syllable_possible(bare, &self.config)
             || method_result.is_foreign
             || (tone != Tone::Flat && !tone_allowed_with_coda(tone, coda_of(bare)));
 
@@ -172,60 +175,9 @@ impl Engine {
         self.show(&target)
     }
 
-    fn syllable_possible(&self, bare: &str) -> bool {
-        is_valid_prefix(bare)
-            || self
-                .expand_quick_consonants(bare)
-                .is_some_and(|e| is_valid_prefix(&e))
-    }
-
     fn quick_consonant_expansion(&self) -> Option<String> {
-        let out = self.expand_quick_consonants(&self.buffer.displayed)?;
+        let out = expand_quick_consonants(&self.buffer.displayed, &self.config)?;
         (out != self.buffer.displayed && is_valid_prefix(&out)).then_some(out)
-    }
-
-    fn expand_quick_consonants(&self, word: &str) -> Option<String> {
-        if self.config.method != InputMethod::Telex
-            || !(self.config.quick_start_consonant || self.config.quick_end_consonant)
-        {
-            return None;
-        }
-        let chars: Vec<char> = word.chars().collect();
-        if chars.len() < 2 {
-            return None;
-        }
-
-        let head = self
-            .config
-            .quick_start_consonant
-            .then(|| start_consonant(lower(chars[0])))
-            .flatten()
-            .map(|(a, b)| {
-                let first = chars[0].is_uppercase();
-                [cased(a, first), cased(b, first && chars[1].is_uppercase())]
-            });
-
-        let last = chars[chars.len() - 1];
-        let tail = self
-            .config
-            .quick_end_consonant
-            .then(|| is_vowel(chars[chars.len() - 2]).then(|| end_consonant(lower(last))))
-            .flatten()
-            .flatten()
-            .map(|(a, b)| {
-                let upper = last.is_uppercase();
-                [cased(a, upper), cased(b, upper)]
-            });
-
-        if head.is_none() && tail.is_none() {
-            return None;
-        }
-
-        let body = &chars[usize::from(head.is_some())..chars.len() - usize::from(tail.is_some())];
-        let mut out: String = head.into_iter().flatten().collect();
-        out.extend(body);
-        out.extend(tail.into_iter().flatten());
-        Some(out)
     }
 
     fn show(&mut self, text: &str) -> Vec<EditAction> {
@@ -371,47 +323,6 @@ impl Engine {
     pub fn current_displayed(&self) -> String {
         self.buffer.displayed.clone()
     }
-}
-
-// OpenKey _quickStartConsonant.
-fn start_consonant(ch: char) -> Option<(char, char)> {
-    match ch {
-        'f' => Some(('p', 'h')),
-        'j' => Some(('g', 'i')),
-        'w' => Some(('q', 'u')),
-        _ => None,
-    }
-}
-
-// OpenKey _quickEndConsonant.
-fn end_consonant(ch: char) -> Option<(char, char)> {
-    match ch {
-        'g' => Some(('n', 'g')),
-        'h' => Some(('n', 'h')),
-        'k' => Some(('c', 'h')),
-        _ => None,
-    }
-}
-
-fn lower(ch: char) -> char {
-    ch.to_lowercase().next().unwrap_or(ch)
-}
-
-fn cased(ch: char, upper: bool) -> char {
-    if upper {
-        ch.to_uppercase().next().unwrap_or(ch)
-    } else {
-        ch
-    }
-}
-
-fn is_vowel(ch: char) -> bool {
-    let lower = lower(ch);
-    let base = base_vowel(lower).unwrap_or(lower);
-    matches!(
-        base,
-        'a' | 'â' | 'ă' | 'e' | 'ê' | 'i' | 'o' | 'ô' | 'ơ' | 'u' | 'ư' | 'y'
-    )
 }
 
 /// A character the shell synthesises carries no keycode, so an application that

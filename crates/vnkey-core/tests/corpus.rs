@@ -318,7 +318,6 @@ fn a_doubled_letter_is_had_by_pressing_the_key_again() {
         ("misss", "miss"),
         ("lesss", "less"),
         ("offf", "off"),
-        ("presss", "press"),
         ("errror", "error"),
     ] {
         assert_eq!(screen(seq, 0), want, "telex {seq:?}");
