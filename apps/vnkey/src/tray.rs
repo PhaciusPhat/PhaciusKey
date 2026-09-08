@@ -58,6 +58,7 @@ impl Tray {
 
     pub fn refresh(&self, current_app: Option<&str>) {
         let effective = crate::state::vietnamese_active();
+        let enabled = crate::state::vietnamese_enabled();
 
         let status = if crate::platform::secure_input_active() {
             "⚠ Secure input on — Vietnamese paused (password field?)".to_string()
@@ -74,7 +75,7 @@ impl Tray {
             .tray
             .set_tooltip(Some(format!("PhaciusKey — {status}")));
 
-        let _ = self.tray.set_icon(status_icon(effective));
+        let _ = self.tray.set_icon(status_icon(enabled));
         // `set_icon` re-sends the image with `is_template: false`, so the flag
         // has to be put back or the second icon of a session loses the theme.
         self.tray.set_icon_as_template(true);

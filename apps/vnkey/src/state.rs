@@ -283,6 +283,12 @@ pub fn vietnamese_active() -> bool {
     with(|s| s.vietnamese_here()).unwrap_or(false)
 }
 
+/// The global switch alone. An app exclusion and the per-app override both
+/// leave it where it is, so the menu bar keeps reporting what the typist set.
+pub fn vietnamese_enabled() -> bool {
+    with(|s| s.settings.enabled).unwrap_or(false)
+}
+
 /// Whether the application in front is being left in English, which the toggle
 /// shortcut can suspend for as long as that application stays in front.
 pub fn exclusion_in_effect() -> bool {
@@ -293,6 +299,37 @@ pub fn exclusion_in_effect() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shell(settings: Settings, app: &str, app_override: Option<bool>) -> Shell {
+        Shell {
+            engine: Engine::new(settings.to_core(Some(app))),
+            settings,
+            current_app: Some(app.to_string()),
+            seen_apps: Vec::new(),
+            app_override,
+        }
+    }
+
+    fn excluding(app: &str) -> Settings {
+        let mut settings = Settings::default();
+        settings.set_excluded(app, true);
+        settings.enabled = true;
+        settings
+    }
+
+    #[test]
+    fn an_excluded_app_leaves_the_global_switch_on() {
+        let s = shell(excluding("IntelliJ IDEA"), "IntelliJ IDEA", None);
+        assert!(!s.vietnamese_here());
+        assert!(s.settings.enabled);
+    }
+
+    #[test]
+    fn a_per_app_override_leaves_the_global_switch_on() {
+        let s = shell(excluding("IntelliJ IDEA"), "IntelliJ IDEA", Some(true));
+        assert!(s.vietnamese_here());
+        assert!(s.settings.enabled);
+    }
 
     #[test]
     fn every_valid_shortcut_survives_the_round_trip() {
