@@ -138,7 +138,7 @@ fn known_ambiguous_english_words_still_convert() {
 
 #[test]
 fn tone_removal_key_with_nothing_to_remove_is_literal() {
-    for word in ["z", "zoo", "zalo", "size", "haz"] {
+    for word in ["z", "zalo", "size", "haz"] {
         assert_eq!(telex(word), word, "expected {word:?} to survive untouched");
     }
     assert_eq!(telex("hasz"), "ha");

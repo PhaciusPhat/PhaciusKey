@@ -36,6 +36,11 @@ fn tilde_tone() {
 }
 
 #[test]
+fn z_onset_takes_a_tone() {
+    assert_eq!(displayed_after("zi5"), "zị");
+}
+
+#[test]
 fn dot_tone() {
     assert_eq!(displayed_after("ha5"), "hạ");
 }

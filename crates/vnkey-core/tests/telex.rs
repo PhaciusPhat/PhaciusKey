@@ -59,6 +59,18 @@ fn flat_tone_z() {
 }
 
 #[test]
+fn z_onset_takes_a_tone() {
+    assert_eq!(displayed_after("zij"), "zị");
+    assert_eq!(displayed_after("zas"), "zá");
+}
+
+#[test]
+fn z_onset_takes_a_diacritic() {
+    assert_eq!(displayed_after("zoo"), "zô");
+    assert_eq!(displayed_after("zuw"), "zư");
+}
+
+#[test]
 fn circumflex_a() {
     assert_eq!(displayed_after("haa"), "hâ");
 }

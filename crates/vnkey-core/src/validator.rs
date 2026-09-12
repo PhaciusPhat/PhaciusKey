@@ -126,9 +126,11 @@ pub fn base_vowel(c: char) -> Option<char> {
     }
 }
 
+// `z` is not a Vietnamese letter; informal spelling writes it for `d` or `gi`
+// ("zị", "zùm"), and those spellings carry tone marks like any other syllable.
 const ONSETS: &[&str] = &[
     "ngh", "gh", "gi", "ng", "nh", "ph", "th", "tr", "ch", "kh", "qu", "b", "c", "d", "đ", "g",
-    "h", "k", "l", "m", "n", "p", "r", "s", "t", "v", "x",
+    "h", "k", "l", "m", "n", "p", "r", "s", "t", "v", "x", "z",
 ];
 
 fn parse_rime(s: &str) -> Option<(&'static str, &'static str)> {
@@ -270,6 +272,13 @@ mod tests {
         assert!(is_valid_syllable("nghe"));
         assert!(!is_valid_syllable("gha"));
         assert!(!is_valid_syllable("ngha"));
+    }
+
+    #[test]
+    fn z_onset() {
+        assert!(is_valid_syllable("zi"));
+        assert!(is_valid_syllable("zô"));
+        assert!(!is_valid_syllable("zz"));
     }
 
     #[test]
