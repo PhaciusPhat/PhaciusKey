@@ -228,7 +228,7 @@
       return;
     }
     box.innerHTML = names.map(function (n) {
-      return '<div class="row"><div class="lbl"><b>' + esc(n.label) + (n.tag || "") + "</b>" +
+      return '<div class="row"><div class="lbl"><b>' + esc(n.label) + "</b>" +
         (n.sub ? "<small>" + esc(n.sub) + "</small>" : "") + "</div>" +
         '<button class="rm" title="' + title + '" data-name="' + esc(n.key) + '">✕</button></div>';
     }).join("");
@@ -314,7 +314,7 @@
     $("update-btn").classList.toggle("accent", s.update_state === "available");
 
     renderList($("apps"), (s.excluded_apps || []).map(function (n) {
-      return { key: n, label: n, tag: n === s.current_app ? '<span class="tag">active</span>' : "" };
+      return { key: n, label: n };
     }), "Remove from the list", function (n) {
       return { cmd: "exclude", name: n, on: false };
     });
