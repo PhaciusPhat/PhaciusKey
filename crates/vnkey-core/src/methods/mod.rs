@@ -151,7 +151,7 @@ pub enum HornOutcome {
 /// vowel, and `None` for one this key cannot mark.
 pub fn horn_key(syllable: &str, mark: fn(char) -> Option<char>) -> Option<HornOutcome> {
     let chars: Vec<char> = syllable.chars().collect();
-    let (start, len) = horn_target(&chars)?;
+    let (start, len) = horn_target(&chars, mark)?;
     let target = start..start + len;
 
     let mut marked = String::with_capacity(syllable.len());
@@ -178,9 +178,12 @@ pub fn horn_key(syllable: &str, mark: fn(char) -> Option<char>) -> Option<HornOu
 }
 
 /// The vowels a horn key lands on: "uo", "ua" and "uu" take it on their first
-/// vowel ("ươ", "ưa", "ưu"), any other syllable on its last vowel. The `u` of a
-/// `qu` onset is a consonant and never takes one.
-fn horn_target(chars: &[char]) -> Option<(usize, usize)> {
+/// vowel ("ươ", "ưa", "ưu"), any other syllable on the last vowel of its final
+/// vowel cluster this key can mark — "oi" and "ai" close on a glide that takes
+/// no mark of its own, so the horn goes on the nucleus before it, and a vowel
+/// behind a consonant belongs to another cluster and is out of reach. The `u`
+/// of a `qu` onset is a consonant and never takes one.
+fn horn_target(chars: &[char], mark: fn(char) -> Option<char>) -> Option<(usize, usize)> {
     let bases: Vec<char> = chars.iter().map(|&c| unmarked(c)).collect();
     let onset_u = |i: usize| i > 0 && bases[i - 1] == 'q';
 
@@ -194,7 +197,12 @@ fn horn_target(chars: &[char]) -> Option<(usize, usize)> {
         }
     }
 
-    let last = bases.iter().rposition(|&c| is_vowel(c))?;
+    let end = bases.iter().rposition(|&c| is_vowel(c))?;
+    let cluster = bases[..=end]
+        .iter()
+        .rposition(|&c| !is_vowel(c))
+        .map_or(0, |i| i + 1);
+    let last = cluster + bases[cluster..=end].iter().rposition(|&c| mark(c).is_some())?;
     (!onset_u(last)).then_some((last, 1))
 }
 

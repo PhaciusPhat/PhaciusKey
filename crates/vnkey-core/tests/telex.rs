@@ -324,3 +324,9 @@ fn a_second_w_gives_back_a_mark_made_on_a_vowel_cluster() {
     assert_eq!(displayed_after("thuoww"), "thuow");
     assert_eq!(displayed_after("cuuww"), "cuuw");
 }
+
+#[test]
+fn a_horn_skips_a_glide_the_horn_cannot_mark() {
+    assert_eq!(displayed_after("voiwf"), "vời");
+    assert_eq!(displayed_after("toiw"), "tơi");
+}

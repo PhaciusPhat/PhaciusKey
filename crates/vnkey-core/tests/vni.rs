@@ -123,3 +123,15 @@ fn a_second_horn_key_gives_back_a_mark_made_on_a_vowel_cluster() {
     assert_eq!(displayed_after("trua77"), "trua7");
     assert_eq!(displayed_after("thuo77"), "thuo7");
 }
+
+#[test]
+fn a_horn_skips_a_glide_the_horn_cannot_mark() {
+    assert_eq!(displayed_after("voi71"), "với");
+    assert_eq!(displayed_after("toi7"), "tơi");
+    assert_eq!(displayed_after("tui7"), "tưi");
+}
+
+#[test]
+fn a_second_horn_key_gives_back_a_mark_made_before_a_glide() {
+    assert_eq!(displayed_after("voi77"), "voi7");
+}
