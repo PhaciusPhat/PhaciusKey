@@ -1,4 +1,4 @@
-use super::{tone_applies, InputMethodProcessor, MethodResult};
+use super::{tone_applies, undo_last_vowel_mark, InputMethodProcessor, MethodResult};
 use crate::types::{Config, Tone};
 use crate::validator::is_valid_prefix;
 
@@ -116,6 +116,16 @@ impl TelexState<'_> {
             }
             self.cancelled = true;
             return;
+        }
+
+        if let Some(marks) = marks_of(lower) {
+            if let Some(restored) = undo_last_vowel_mark(&self.syllable, marks) {
+                self.syllable = restored;
+                self.syllable.push(lower);
+                self.mask.push(ch.is_uppercase());
+                self.cancelled = true;
+                return;
+            }
         }
 
         if let Some(replacement) = diacritic_pair(&self.syllable, lower) {
@@ -279,22 +289,11 @@ fn diacritic_pair(syllable: &str, ch: char) -> Option<PairResult> {
 
     match (last, ch) {
         ('a', 'a') => Some(PairResult::Replace(format!("{prefix}â"))),
-        ('â', 'a') => Some(PairResult::Restore(format!("{prefix}aa"))),
-
         ('a', 'w') => Some(PairResult::Replace(format!("{prefix}ă"))),
-        ('ă', 'w') => Some(PairResult::Restore(format!("{prefix}aw"))),
-
         ('e', 'e') => Some(PairResult::Replace(format!("{prefix}ê"))),
-        ('ê', 'e') => Some(PairResult::Restore(format!("{prefix}ee"))),
-
         ('o', 'o') => Some(PairResult::Replace(format!("{prefix}ô"))),
-        ('ô', 'o') => Some(PairResult::Restore(format!("{prefix}oo"))),
-
         ('o', 'w') => Some(PairResult::Replace(format!("{prefix}ơ"))),
-        ('ơ', 'w') => Some(PairResult::Restore(format!("{prefix}ow"))),
-
         ('u', 'w') => Some(PairResult::Replace(format!("{prefix}ư"))),
-        ('ư', 'w') => Some(PairResult::Restore(format!("{prefix}uw"))),
 
         ('d', 'd') => Some(PairResult::Replace(format!("{prefix}đ"))),
         ('đ', 'd') => Some(PairResult::Restore(format!("{prefix}dd"))),
@@ -377,21 +376,28 @@ fn apply_horn_cluster(syllable: &str) -> Option<String> {
     }
 
     let chars: Vec<char> = syllable.chars().collect();
-    for i in (0..chars.len()).rev() {
-        let replacement = match chars[i] {
-            'u' => Some('ư'),
-            'o' => Some('ơ'),
-            'a' => Some('ă'),
-            _ => None,
-        };
-        if let Some(r) = replacement {
-            let mut out: String = chars[..i].iter().collect();
-            out.push(r);
-            out.extend(chars[i + 1..].iter());
-            return Some(out);
-        }
+    let i = chars.iter().rposition(|&c| is_vowel(c))?;
+    let replacement = match chars[i] {
+        'u' => 'ư',
+        'o' => 'ơ',
+        'a' => 'ă',
+        _ => return None,
+    };
+    let mut out: String = chars[..i].iter().collect();
+    out.push(replacement);
+    out.extend(chars[i + 1..].iter());
+    Some(out)
+}
+
+/// The marks a Telex key puts on a vowel, and so takes off when it is pressed again.
+fn marks_of(key: char) -> Option<&'static [char]> {
+    match key {
+        'w' => Some(&['ă', 'ơ', 'ư']),
+        'a' => Some(&['â']),
+        'e' => Some(&['ê']),
+        'o' => Some(&['ô']),
+        _ => None,
     }
-    None
 }
 
 #[cfg(test)]

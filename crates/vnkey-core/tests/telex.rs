@@ -266,3 +266,34 @@ fn the_horn_rules_still_win_over_the_standalone_one() {
         assert_eq!(displayed_after(seq), want, "telex {seq:?}");
     }
 }
+
+#[test]
+fn w_does_not_reach_past_a_vowel_it_cannot_mark() {
+    assert_eq!(displayed_after("gatew"), "gatew");
+    assert_eq!(displayed_after("tiew"), "tiew");
+}
+
+#[test]
+fn a_second_w_gives_back_a_mark_made_before_the_coda() {
+    assert_eq!(displayed_after("tanww"), "tanw");
+    assert_eq!(displayed_after("quangww"), "quangw");
+    assert_eq!(displayed_after("hoangww"), "hoangw");
+}
+
+#[test]
+fn a_second_vowel_key_gives_back_a_mark_made_before_the_coda() {
+    assert_eq!(displayed_after("loanaa"), "loana");
+    assert_eq!(displayed_after("vieneee"), "vienee");
+}
+
+#[test]
+fn marks_still_come_back_without_auto_restore() {
+    let plain = Config {
+        method: InputMethod::Telex,
+        auto_restore: false,
+        ..Default::default()
+    };
+    assert_eq!(displayed_with(plain.clone(), "gatew"), "gatew");
+    assert_eq!(displayed_with(plain.clone(), "gateww"), "gateww");
+    assert_eq!(displayed_with(plain, "tanww"), "tanw");
+}

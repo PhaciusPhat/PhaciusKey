@@ -1,4 +1,4 @@
-use super::{tone_applies, InputMethodProcessor, MethodResult};
+use super::{tone_applies, undo_last_vowel_mark, InputMethodProcessor, MethodResult};
 use crate::types::{Config, Tone};
 
 pub struct VniMethod;
@@ -58,7 +58,8 @@ pub fn process_vni(raw: &str, config: &Config) -> MethodResult {
 
         match ch {
             '6' => {
-                if undo_diacritic(&mut syllable, &['â', 'ê', 'ô']) {
+                if let Some(restored) = undo_last_vowel_mark(&syllable, &['â', 'ê', 'ô']) {
+                    syllable = restored;
                     cancelled = true;
                     syllable.push(ch);
                     mask.push(false);
@@ -68,7 +69,8 @@ pub fn process_vni(raw: &str, config: &Config) -> MethodResult {
                 }
             }
             '7' => {
-                if undo_diacritic(&mut syllable, &['ư', 'ơ']) {
+                if let Some(restored) = undo_last_vowel_mark(&syllable, &['ư', 'ơ']) {
+                    syllable = restored;
                     cancelled = true;
                     syllable.push(ch);
                     mask.push(false);
@@ -78,7 +80,8 @@ pub fn process_vni(raw: &str, config: &Config) -> MethodResult {
                 }
             }
             '8' => {
-                if undo_diacritic(&mut syllable, &['ă']) {
+                if let Some(restored) = undo_last_vowel_mark(&syllable, &['ă']) {
+                    syllable = restored;
                     cancelled = true;
                     syllable.push(ch);
                     mask.push(false);
@@ -162,40 +165,6 @@ pub fn encode_vni(text: &str) -> String {
         out.push(d);
     }
     out
-}
-
-fn undo_diacritic(s: &mut String, marked: &[char]) -> bool {
-    let chars: Vec<char> = s.chars().collect();
-    for i in (0..chars.len()).rev() {
-        if !is_vowel(chars[i]) {
-            continue;
-        }
-        if !marked.contains(&chars[i]) {
-            return false;
-        }
-        let base = match chars[i] {
-            'â' => 'a',
-            'ê' => 'e',
-            'ô' => 'o',
-            'ơ' => 'o',
-            'ư' => 'u',
-            'ă' => 'a',
-            other => other,
-        };
-        let mut out: String = chars[..i].iter().collect();
-        out.push(base);
-        out.extend(chars[i + 1..].iter());
-        *s = out;
-        return true;
-    }
-    false
-}
-
-fn is_vowel(c: char) -> bool {
-    matches!(
-        c,
-        'a' | 'â' | 'ă' | 'e' | 'ê' | 'i' | 'o' | 'ô' | 'ơ' | 'u' | 'ư' | 'y'
-    )
 }
 
 fn apply_circumflex(s: &mut String) -> bool {

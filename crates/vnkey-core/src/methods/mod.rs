@@ -139,6 +139,30 @@ fn is_vowel(ch: char) -> bool {
     )
 }
 
+/// Take the mark off the last vowel when it is one this key puts there; `None`
+/// when that vowel is unmarked or carries a mark from another key.
+pub fn undo_last_vowel_mark(syllable: &str, marked: &[char]) -> Option<String> {
+    let chars: Vec<char> = syllable.chars().collect();
+    let i = chars.iter().rposition(|&c| is_vowel(c))?;
+    if !marked.contains(&chars[i]) {
+        return None;
+    }
+    let mut out: String = chars[..i].iter().collect();
+    out.push(unmarked(chars[i]));
+    out.extend(chars[i + 1..].iter());
+    Some(out)
+}
+
+fn unmarked(ch: char) -> char {
+    match ch {
+        'â' | 'ă' => 'a',
+        'ê' => 'e',
+        'ô' | 'ơ' => 'o',
+        'ư' => 'u',
+        other => other,
+    }
+}
+
 pub trait InputMethodProcessor {
     /// Process the full raw buffer; `None` if it is empty.
     fn process(&self, raw: &str, config: &Config) -> Option<MethodResult>;
