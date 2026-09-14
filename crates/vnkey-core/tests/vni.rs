@@ -106,3 +106,20 @@ fn tone_reverses_after_space_and_backspace() {
     e.process(Keystroke::char('1'));
     assert_eq!(e.current_displayed(), "đoan1");
 }
+
+#[test]
+fn uu_takes_the_horn_on_the_first_u() {
+    assert_eq!(displayed_after("cuu71"), "cứu");
+    assert_eq!(displayed_after("luu7"), "lưu");
+}
+
+#[test]
+fn the_u_of_a_qu_onset_takes_no_horn() {
+    assert_eq!(displayed_after("quo73"), "quở");
+}
+
+#[test]
+fn a_second_horn_key_gives_back_a_mark_made_on_a_vowel_cluster() {
+    assert_eq!(displayed_after("trua77"), "trua7");
+    assert_eq!(displayed_after("thuo77"), "thuo7");
+}

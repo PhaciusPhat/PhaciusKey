@@ -139,6 +139,65 @@ fn is_vowel(ch: char) -> bool {
     )
 }
 
+/// What a horn key did to the syllable it was pressed on.
+pub enum HornOutcome {
+    Marked(String),
+    /// The key was pressed again on vowels it had already marked.
+    Restored(String),
+}
+
+/// Put the horn (or Telex's breve) on the vowels this key lands on, or take it
+/// back off when they already carry it. `mark` gives the marked form of a bare
+/// vowel, and `None` for one this key cannot mark.
+pub fn horn_key(syllable: &str, mark: fn(char) -> Option<char>) -> Option<HornOutcome> {
+    let chars: Vec<char> = syllable.chars().collect();
+    let (start, len) = horn_target(&chars)?;
+    let target = start..start + len;
+
+    let mut marked = String::with_capacity(syllable.len());
+    let mut changed = false;
+    for (i, &c) in chars.iter().enumerate() {
+        if !target.contains(&i) {
+            marked.push(c);
+            continue;
+        }
+        let m = mark(unmarked(c))?;
+        changed |= m != c;
+        marked.push(m);
+    }
+    if changed {
+        return Some(HornOutcome::Marked(marked));
+    }
+
+    let restored = chars
+        .iter()
+        .enumerate()
+        .map(|(i, &c)| if target.contains(&i) { unmarked(c) } else { c })
+        .collect();
+    Some(HornOutcome::Restored(restored))
+}
+
+/// The vowels a horn key lands on: "uo", "ua" and "uu" take it on their first
+/// vowel ("ươ", "ưa", "ưu"), any other syllable on its last vowel. The `u` of a
+/// `qu` onset is a consonant and never takes one.
+fn horn_target(chars: &[char]) -> Option<(usize, usize)> {
+    let bases: Vec<char> = chars.iter().map(|&c| unmarked(c)).collect();
+    let onset_u = |i: usize| i > 0 && bases[i - 1] == 'q';
+
+    for ([first, second], len) in [(['u', 'o'], 2), (['u', 'a'], 1), (['u', 'u'], 1)] {
+        let pair = bases
+            .windows(2)
+            .rposition(|w| w[0] == first && w[1] == second)
+            .filter(|&i| !onset_u(i));
+        if let Some(i) = pair {
+            return Some((i, len));
+        }
+    }
+
+    let last = bases.iter().rposition(|&c| is_vowel(c))?;
+    (!onset_u(last)).then_some((last, 1))
+}
+
 /// Take the mark off the last vowel when it is one this key puts there; `None`
 /// when that vowel is unmarked or carries a mark from another key.
 pub fn undo_last_vowel_mark(syllable: &str, marked: &[char]) -> Option<String> {

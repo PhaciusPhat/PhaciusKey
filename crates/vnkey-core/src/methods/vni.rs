@@ -1,4 +1,5 @@
-use super::{tone_applies, undo_last_vowel_mark, InputMethodProcessor, MethodResult};
+use super::{horn_key, tone_applies, undo_last_vowel_mark, HornOutcome};
+use super::{InputMethodProcessor, MethodResult};
 use crate::types::{Config, Tone};
 
 pub struct VniMethod;
@@ -68,17 +69,19 @@ pub fn process_vni(raw: &str, config: &Config) -> MethodResult {
                     mask.push(false);
                 }
             }
-            '7' => {
-                if let Some(restored) = undo_last_vowel_mark(&syllable, &['ư', 'ơ']) {
+            '7' => match horn_key(&syllable, vni_horn) {
+                Some(HornOutcome::Marked(marked)) => syllable = marked,
+                Some(HornOutcome::Restored(restored)) => {
                     syllable = restored;
                     cancelled = true;
                     syllable.push(ch);
                     mask.push(false);
-                } else if !apply_horn(&mut syllable) {
+                }
+                None => {
                     syllable.push(ch);
                     mask.push(false);
                 }
-            }
+            },
             '8' => {
                 if let Some(restored) = undo_last_vowel_mark(&syllable, &['ă']) {
                     syllable = restored;
@@ -176,19 +179,12 @@ fn apply_circumflex(s: &mut String) -> bool {
     })
 }
 
-fn apply_horn(s: &mut String) -> bool {
-    if let Some(pos) = s.find("uo") {
-        let mut new = s[..pos].to_string();
-        new.push('ư');
-        new.push('ơ');
-        new.push_str(&s[pos + 2..]);
-        *s = new;
-        return true;
+fn vni_horn(bare: char) -> Option<char> {
+    match bare {
+        'u' => Some('ư'),
+        'o' => Some('ơ'),
+        _ => None,
     }
-    if replace_last_vowel(s, |c| if c == 'u' { Some('ư') } else { None }) {
-        return true;
-    }
-    replace_last_vowel(s, |c| if c == 'o' { Some('ơ') } else { None })
 }
 
 fn apply_breve(s: &mut String) -> bool {

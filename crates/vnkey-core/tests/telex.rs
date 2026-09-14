@@ -297,3 +297,30 @@ fn marks_still_come_back_without_auto_restore() {
     assert_eq!(displayed_with(plain.clone(), "gateww"), "gateww");
     assert_eq!(displayed_with(plain, "tanww"), "tanw");
 }
+
+#[test]
+fn uu_takes_the_horn_on_the_first_u() {
+    assert_eq!(displayed_after("cuuws"), "cứu");
+    assert_eq!(displayed_after("luuw"), "lưu");
+    assert_eq!(displayed_after("nguuw"), "ngưu");
+}
+
+#[test]
+fn a_horn_typed_after_the_vowel_cluster_still_lands_on_it() {
+    assert_eq!(displayed_after("ruouwj"), "rượu");
+    assert_eq!(displayed_after("nguoiwf"), "người");
+}
+
+#[test]
+fn the_u_of_a_qu_onset_takes_no_horn() {
+    assert_eq!(displayed_after("quow"), "quơ");
+    assert_eq!(displayed_after("quowr"), "quở");
+    assert_eq!(displayed_after("quawng"), "quăng");
+}
+
+#[test]
+fn a_second_w_gives_back_a_mark_made_on_a_vowel_cluster() {
+    assert_eq!(displayed_after("truaww"), "truaw");
+    assert_eq!(displayed_after("thuoww"), "thuow");
+    assert_eq!(displayed_after("cuuww"), "cuuw");
+}

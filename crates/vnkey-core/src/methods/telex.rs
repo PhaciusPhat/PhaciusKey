@@ -1,4 +1,5 @@
-use super::{tone_applies, undo_last_vowel_mark, InputMethodProcessor, MethodResult};
+use super::{horn_key, tone_applies, undo_last_vowel_mark, HornOutcome};
+use super::{InputMethodProcessor, MethodResult};
 use crate::types::{Config, Tone};
 use crate::validator::is_valid_prefix;
 
@@ -97,13 +98,6 @@ impl TelexState<'_> {
             self.is_foreign = true;
         }
 
-        if lower == 'w' && (self.syllable.ends_with("uo") || self.syllable.ends_with("ua")) {
-            if let Some(new_syl) = apply_horn_cluster(&self.syllable) {
-                self.syllable = new_syl;
-                return;
-            }
-        }
-
         if lower == 'w'
             && self
                 .standalone_w
@@ -116,6 +110,23 @@ impl TelexState<'_> {
             }
             self.cancelled = true;
             return;
+        }
+
+        if lower == 'w' {
+            match horn_key(&self.syllable, telex_mark) {
+                Some(HornOutcome::Marked(marked)) => {
+                    self.syllable = marked;
+                    return;
+                }
+                Some(HornOutcome::Restored(restored)) => {
+                    self.syllable = restored;
+                    self.syllable.push(lower);
+                    self.mask.push(ch.is_uppercase());
+                    self.cancelled = true;
+                    return;
+                }
+                None => {}
+            }
         }
 
         if let Some(marks) = marks_of(lower) {
@@ -140,13 +151,6 @@ impl TelexState<'_> {
                     self.cancelled = true;
                     return;
                 }
-            }
-        }
-
-        if lower == 'w' {
-            if let Some(new_syl) = apply_horn_cluster(&self.syllable) {
-                self.syllable = new_syl;
-                return;
             }
         }
 
@@ -289,11 +293,8 @@ fn diacritic_pair(syllable: &str, ch: char) -> Option<PairResult> {
 
     match (last, ch) {
         ('a', 'a') => Some(PairResult::Replace(format!("{prefix}â"))),
-        ('a', 'w') => Some(PairResult::Replace(format!("{prefix}ă"))),
         ('e', 'e') => Some(PairResult::Replace(format!("{prefix}ê"))),
         ('o', 'o') => Some(PairResult::Replace(format!("{prefix}ô"))),
-        ('o', 'w') => Some(PairResult::Replace(format!("{prefix}ơ"))),
-        ('u', 'w') => Some(PairResult::Replace(format!("{prefix}ư"))),
 
         ('d', 'd') => Some(PairResult::Replace(format!("{prefix}đ"))),
         ('đ', 'd') => Some(PairResult::Restore(format!("{prefix}dd"))),
@@ -356,43 +357,19 @@ fn is_vowel(c: char) -> bool {
     )
 }
 
-fn apply_horn_cluster(syllable: &str) -> Option<String> {
-    if let Some(pos) = syllable.rfind("uo") {
-        let mut out = syllable[..pos].to_string();
-        out.push('ư');
-        out.push('ơ');
-        out.push_str(&syllable[pos + 2..]);
-        return Some(out);
+/// Telex's `w` writes the breve as well as the horn.
+fn telex_mark(bare: char) -> Option<char> {
+    match bare {
+        'u' => Some('ư'),
+        'o' => Some('ơ'),
+        'a' => Some('ă'),
+        _ => None,
     }
-
-    if let Some(pos) = syllable.rfind("ua") {
-        let after_q = syllable[..pos].ends_with('q');
-        if !after_q {
-            let mut out = syllable[..pos].to_string();
-            out.push('ư');
-            out.push_str(&syllable[pos + 1..]);
-            return Some(out);
-        }
-    }
-
-    let chars: Vec<char> = syllable.chars().collect();
-    let i = chars.iter().rposition(|&c| is_vowel(c))?;
-    let replacement = match chars[i] {
-        'u' => 'ư',
-        'o' => 'ơ',
-        'a' => 'ă',
-        _ => return None,
-    };
-    let mut out: String = chars[..i].iter().collect();
-    out.push(replacement);
-    out.extend(chars[i + 1..].iter());
-    Some(out)
 }
 
-/// The marks a Telex key puts on a vowel, and so takes off when it is pressed again.
+/// The marks a Telex vowel key puts on a vowel, and so takes off when it is pressed again.
 fn marks_of(key: char) -> Option<&'static [char]> {
     match key {
-        'w' => Some(&['ă', 'ơ', 'ư']),
         'a' => Some(&['â']),
         'e' => Some(&['ê']),
         'o' => Some(&['ô']),
